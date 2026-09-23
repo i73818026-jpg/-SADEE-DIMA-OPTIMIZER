@@ -11,20 +11,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-
-      # ==========================================
-      # CHECKOUT
-      # ==========================================
-
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-
-      # ==========================================
-      # FIND & EXTRACT ZIP
-      # ==========================================
-
-      - name: Extract Project ZIP
+      - name: Find and Extract ZIP
         shell: bash
         run: |
           set -e
@@ -32,21 +22,16 @@ jobs:
           ZIP_FILE=$(find . -maxdepth 1 -type f -iname "*.zip" | head -n 1)
 
           if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: ZIP file not found."
+            echo "ERROR: ZIP file not found"
             exit 1
           fi
 
-          echo "Found ZIP: $ZIP_FILE"
+          echo "Found: $ZIP_FILE"
 
           rm -rf source
           mkdir -p source
 
           unzip -o "$ZIP_FILE" -d source
-
-
-      # ==========================================
-      # FIND FLUTTER PROJECT
-      # ==========================================
 
       - name: Find Flutter Project
         shell: bash
@@ -56,19 +41,12 @@ jobs:
           SOURCE_DIR=$(find source -name pubspec.yaml -type f -print -quit | xargs dirname)
 
           if [ -z "$SOURCE_DIR" ]; then
-            echo "ERROR: pubspec.yaml not found."
+            echo "ERROR: pubspec.yaml not found"
             exit 1
           fi
 
-          echo "Flutter project:"
-          echo "$SOURCE_DIR"
-
+          echo "SOURCE_DIR=$SOURCE_DIR"
           echo "SOURCE_DIR=$SOURCE_DIR" >> "$GITHUB_ENV"
-
-
-      # ==========================================
-      # JAVA
-      # ==========================================
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -76,22 +54,12 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-
-      # ==========================================
-      # FLUTTER
-      # ==========================================
-
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           flutter-version: "3.35.7"
           channel: stable
           cache: true
-
-
-      # ==========================================
-      # CREATE NEW SUPPORTED FLUTTER PROJECT
-      # ==========================================
 
       - name: Create Fresh Flutter Project
         run: |
@@ -104,12 +72,7 @@ jobs:
             --platforms android \
             fresh_app
 
-
-      # ==========================================
-      # COPY ORIGINAL APP
-      # ==========================================
-
-      - name: Copy Original App
+      - name: Copy App Files
         shell: bash
         run: |
           set -e
@@ -118,17 +81,11 @@ jobs:
           mkdir -p fresh_app/lib
 
           cp -R "$SOURCE_DIR/lib/." fresh_app/lib/
-
           cp "$SOURCE_DIR/pubspec.yaml" fresh_app/pubspec.yaml
 
           if [ -d "$SOURCE_DIR/assets" ]; then
             cp -R "$SOURCE_DIR/assets" fresh_app/assets
           fi
-
-
-      # ==========================================
-      # FIX DEPENDENCIES
-      # ==========================================
 
       - name: Fix Dependencies
         shell: bash
@@ -139,34 +96,25 @@ jobs:
           from pathlib import Path
 
           p = Path("fresh_app/pubspec.yaml")
-          s = p.read_text()
+          text = p.read_text()
 
-          # Fix system_info2
-          s = s.replace(
+          text = text.replace(
               "system_info2: ^1.0.1",
               "system_info2: ^4.1.0"
           )
 
-          # Add flutter_spinkit if missing
-          if "flutter_spinkit:" not in s:
-              if "dependencies:" in s:
-                  s = s.replace(
-                      "dependencies:\n",
-                      "dependencies:\n  flutter_spinkit: ^5.2.1\n",
-                      1
-                  )
+          if "flutter_spinkit:" not in text:
+              text = text.replace(
+                  "dependencies:\n",
+                  "dependencies:\n  flutter_spinkit: ^5.2.1\n",
+                  1
+              )
 
-          p.write_text(s)
-
-          print("Dependencies fixed.")
+          p.write_text(text)
+          print("Dependencies fixed")
           PY
 
-
-      # ==========================================
-      # FIX SPINKIT
-      # ==========================================
-
-      - name: Fix SpinKit Widget
+      - name: Fix SpinKit
         shell: bash
         run: |
           set -e
@@ -176,28 +124,23 @@ jobs:
 
           root = Path("fresh_app/lib")
 
-          for p in root.rglob("*.dart"):
-              s = p.read_text()
+          for file in root.rglob("*.dart"):
+              text = file.read_text()
 
-              s = s.replace(
+              text = text.replace(
                   "const SpinKitSphereGlider(",
                   "SpinKitThreeBounce("
               )
 
-              s = s.replace(
+              text = text.replace(
                   "SpinKitSphereGlider(",
                   "SpinKitThreeBounce("
               )
 
-              p.write_text(s)
+              file.write_text(text)
 
-          print("SpinKit fixed.")
+          print("SpinKit fixed")
           PY
-
-
-      # ==========================================
-      # FIX ADMIN HOME
-      # ==========================================
 
       - name: Fix Admin Home
         shell: bash
@@ -206,83 +149,47 @@ jobs:
 
           python3 - <<'PY'
           from pathlib import Path
-          import re
 
           p = Path("fresh_app/lib/screens/admin_home.dart")
+          lines = p.read_text().splitlines()
 
-          if not p.exists():
-              print("admin_home.dart not found. Skipping.")
-              raise SystemExit(0)
+          for i in range(len(lines) - 1):
+              current = lines[i]
+              next_line = lines[i + 1]
 
-          s = p.read_text()
+              if "Duration:" in current and "Status:" in current and "Device:" in next_line:
+                  indent = current[:len(current) - len(current.lstrip())]
 
-          replacement = '''subtitle: Text(
-                                "Duration: ${k['duration_days']}d | Status: $status\\n"
-                                "Device: ${k['device_id'] ?? 'Not Bound'}",
-                                style: const TextStyle(
-                                  color: Colors.white60,
-                                  fontSize: 12,
-                                ),
-                              )'''
+                  lines[i] = (
+                      indent
+                      + '"Duration: ${k[\'duration_days\']}d | Status: $status\\n"'
+                  )
 
-          pattern = r'''subtitle:\s*Text\(
-.*?
-style:\s*const\s+TextStyle\(
-\s*color:\s*Colors\.white60\s*,?
-\s*fontSize:\s*12\s*,?
-\s*\)\s*,?
-\s*\)'''
+                  lines[i + 1] = (
+                      indent
+                      + '"Device: ${k[\'device_id\'] ?? \'Not Bound\']}",'
+                  )
 
-          fixed, count = re.subn(
-              pattern,
-              lambda m: replacement,
-              s,
-              count=1,
-              flags=re.DOTALL
-          )
-
-          if count > 0:
-              p.write_text(fixed)
-              print("Admin Home subtitle fixed successfully.")
+                  print("Admin Home fixed")
+                  break
           else:
-              print("Admin subtitle pattern was not found.")
-              print("No replacement was made.")
+              print("Admin Home already fixed or pattern not found")
+
+          p.write_text("\n".join(lines) + "\n")
           PY
-
-
-      # ==========================================
-      # REMOVE DEFAULT FLUTTER TEST
-      # ==========================================
 
       - name: Remove Default Test
         run: |
           rm -rf fresh_app/test
 
-
-      # ==========================================
-      # GET PACKAGES
-      # ==========================================
-
       - name: Flutter Pub Get
         working-directory: fresh_app
-        run: |
-          flutter pub get
-
-
-      # ==========================================
-      # ANALYZE
-      # ==========================================
+        run: flutter pub get
 
       - name: Flutter Analyze
         working-directory: fresh_app
-        run: |
-          flutter analyze --no-fatal-infos
+        run: flutter analyze --no-fatal-infos
         continue-on-error: true
-
-
-      # ==========================================
-      # BUILD USER APK
-      # ==========================================
 
       - name: Build User APK
         working-directory: fresh_app
@@ -297,11 +204,6 @@ style:\s*const\s+TextStyle\(
             build/app/outputs/flutter-apk/app-release.apk \
             build/app/outputs/flutter-apk/sadee-x-dima-user.apk
 
-
-      # ==========================================
-      # BUILD ADMIN APK
-      # ==========================================
-
       - name: Build Admin APK
         working-directory: fresh_app
         run: |
@@ -314,11 +216,6 @@ style:\s*const\s+TextStyle\(
           cp \
             build/app/outputs/flutter-apk/app-release.apk \
             build/app/outputs/flutter-apk/sadee-x-dima-admin.apk
-
-
-      # ==========================================
-      # UPLOAD BOTH APK
-      # ==========================================
 
       - name: Upload APKs
         uses: actions/upload-artifact@v4
