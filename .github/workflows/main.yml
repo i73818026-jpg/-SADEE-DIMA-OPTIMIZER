@@ -11,28 +11,46 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
+      # =========================================================
+      # CHECKOUT
+      # =========================================================
+
       - name: Checkout repository
         uses: actions/checkout@v4
+
+
+      # =========================================================
+      # FIND / EXTRACT FLUTTER PROJECT
+      # =========================================================
 
       - name: Find Flutter project
         shell: bash
         run: |
           set -euo pipefail
 
+          echo "=== Repository files ==="
+          find . -maxdepth 2 -type f | sort
+
           if [ -f "pubspec.yaml" ]; then
+
             PROJECT_DIR="."
+
           else
+
             ZIP_FILE="$(find . -maxdepth 1 -type f -name '*.zip' -print | sort | tail -n 1 || true)"
 
             if [ -z "$ZIP_FILE" ]; then
-              echo "ERROR: No Flutter project or ZIP found."
+              echo "ERROR: No Flutter project or ZIP file found."
               exit 1
             fi
 
-            echo "Using ZIP: $ZIP_FILE"
+            echo "Using ZIP:"
+            echo "$ZIP_FILE"
 
             rm -rf extracted
             mkdir -p extracted
+
             unzip -q -o "$ZIP_FILE" -d extracted
 
             PUBSPEC="$(find extracted -type f -name 'pubspec.yaml' -print -quit || true)"
@@ -45,8 +63,16 @@ jobs:
             PROJECT_DIR="$(dirname "$PUBSPEC")"
           fi
 
+          echo "======================================"
+          echo "PROJECT_DIR=$PROJECT_DIR"
+          echo "======================================"
+
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "Flutter project: $PROJECT_DIR"
+
+
+      # =========================================================
+      # SETUP FLUTTER
+      # =========================================================
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
@@ -54,10 +80,18 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Flutter version
-        run: flutter --version
 
-      - name: Fix Android toolchain
+      - name: Flutter version
+        run: |
+          flutter --version
+          dart --version
+
+
+      # =========================================================
+      # ANDROID PLATFORM
+      # =========================================================
+
+      - name: Create or repair Android platform
         working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
         run: |
@@ -65,6 +99,9 @@ jobs:
 
           if [ ! -f android/app/build.gradle ] && \
              [ ! -f android/app/build.gradle.kts ]; then
+
+            echo "Android platform missing."
+            echo "Creating Android platform..."
 
             rm -rf android
 
@@ -74,12 +111,28 @@ jobs:
               .
           fi
 
-          # Gradle
+          echo "Android platform OK."
+
+
+      # =========================================================
+      # FIX ANDROID BUILD VERSIONS
+      # =========================================================
+
+      - name: Fix Android build versions
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Fixing Gradle..."
+
           sed -i \
             's#distributionUrl=.*#distributionUrl=https\\://services.gradle.org/distributions/gradle-8.14.5-bin.zip#' \
             android/gradle/wrapper/gradle-wrapper.properties
 
-          # Android Gradle Plugin + Kotlin
+
+          echo "Fixing Android Gradle Plugin..."
+
           if [ -f android/settings.gradle ]; then
 
             sed -i \
@@ -89,7 +142,9 @@ jobs:
             sed -i \
               's/id "org.jetbrains.kotlin.android" version "[^"]*"/id "org.jetbrains.kotlin.android" version "2.2.20"/' \
               android/settings.gradle
+
           fi
+
 
           if [ -f android/settings.gradle.kts ]; then
 
@@ -100,9 +155,36 @@ jobs:
             sed -i \
               's/id("org.jetbrains.kotlin.android") version "[^"]*"/id("org.jetbrains.kotlin.android") version "2.2.20"/' \
               android/settings.gradle.kts
+
           fi
 
-          echo "=== Android files ==="
+
+          echo "======================================"
+          echo "Gradle:"
+          grep "distributionUrl" \
+            android/gradle/wrapper/gradle-wrapper.properties || true
+
+          echo "======================================"
+
+          echo "Android settings:"
+          cat android/settings.gradle 2>/dev/null || \
+          cat android/settings.gradle.kts 2>/dev/null || true
+
+          echo "======================================"
+
+
+      # =========================================================
+      # VERIFY ANDROID FILES
+      # =========================================================
+
+      - name: Verify Android project
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -d android
+
           test -f android/app/build.gradle || \
             test -f android/app/build.gradle.kts
 
@@ -111,21 +193,58 @@ jobs:
 
           test -f android/gradle/wrapper/gradle-wrapper.properties
 
+          echo "Android project verification PASSED."
+
+
+      # =========================================================
+      # PUB GET
+      # =========================================================
+
       - name: Flutter Pub Get
         working-directory: ${{ env.PROJECT_DIR }}
-        run: flutter pub get
+        run: |
+          flutter pub get
+
+
+      # =========================================================
+      # ANALYZE
+      # =========================================================
 
       - name: Flutter Analyze
         working-directory: ${{ env.PROJECT_DIR }}
-        run: flutter analyze --no-fatal-infos
+        run: |
+          flutter analyze \
+            --no-fatal-infos \
+            --no-fatal-warnings
 
-      # =========================
+
+      # =========================================================
+      # PREPARE RELEASE FOLDER
+      # =========================================================
+
+      - name: Prepare release folder
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          rm -rf release
+          mkdir -p release
+
+
+      # =========================================================
       # USER APK
-      # =========================
+      # =========================================================
 
       - name: Build User APK
         working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
         run: |
+          set -euo pipefail
+
+          echo "======================================"
+          echo "BUILDING USER APK"
+          echo "======================================"
+
           flutter clean
           flutter pub get
 
@@ -134,26 +253,59 @@ jobs:
             --flavor user \
             -t lib/main_user.dart
 
+          echo "User build completed."
+
+
       - name: Save User APK
         shell: bash
         run: |
           set -euo pipefail
 
-          mkdir -p release
+          USER_APK=""
 
-          cp \
-            "${PROJECT_DIR}/build/app/outputs/flutter-apk/app-user-release.apk" \
+          if [ -f "${PROJECT_DIR}/build/app/outputs/flutter-apk/app-user-release.apk" ]; then
+            USER_APK="${PROJECT_DIR}/build/app/outputs/flutter-apk/app-user-release.apk"
+          elif [ -f "${PROJECT_DIR}/build/app/outputs/flutter-apk/app-release.apk" ]; then
+            USER_APK="${PROJECT_DIR}/build/app/outputs/flutter-apk/app-release.apk"
+          else
+            USER_APK="$(find "${PROJECT_DIR}/build/app/outputs/flutter-apk" \
+              -type f \
+              -name '*.apk' \
+              -print \
+              | head -n 1 || true)"
+          fi
+
+          if [ -z "$USER_APK" ]; then
+            echo "ERROR: User APK not found."
+            find "${PROJECT_DIR}/build/app/outputs" -type f || true
+            exit 1
+          fi
+
+          echo "User APK:"
+          echo "$USER_APK"
+
+          cp "$USER_APK" \
             "release/SADEE-DIMA-USER.apk"
 
           test -f release/SADEE-DIMA-USER.apk
 
-      # =========================
+          ls -lh release/SADEE-DIMA-USER.apk
+
+
+      # =========================================================
       # ADMIN APK
-      # =========================
+      # =========================================================
 
       - name: Build Admin APK
         working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
         run: |
+          set -euo pipefail
+
+          echo "======================================"
+          echo "BUILDING ADMIN APK"
+          echo "======================================"
+
           flutter clean
           flutter pub get
 
@@ -162,40 +314,91 @@ jobs:
             --flavor admin \
             -t lib/main_admin.dart
 
+          echo "Admin build completed."
+
+
       - name: Save Admin APK
         shell: bash
         run: |
           set -euo pipefail
 
-          mkdir -p release
+          ADMIN_APK=""
 
-          cp \
-            "${PROJECT_DIR}/build/app/outputs/flutter-apk/app-admin-release.apk" \
+          if [ -f "${PROJECT_DIR}/build/app/outputs/flutter-apk/app-admin-release.apk" ]; then
+            ADMIN_APK="${PROJECT_DIR}/build/app/outputs/flutter-apk/app-admin-release.apk"
+          elif [ -f "${PROJECT_DIR}/build/app/outputs/flutter-apk/app-release.apk" ]; then
+            ADMIN_APK="${PROJECT_DIR}/build/app/outputs/flutter-apk/app-release.apk"
+          else
+            ADMIN_APK="$(find "${PROJECT_DIR}/build/app/outputs/flutter-apk" \
+              -type f \
+              -name '*.apk' \
+              -print \
+              | head -n 1 || true)"
+          fi
+
+          if [ -z "$ADMIN_APK" ]; then
+            echo "ERROR: Admin APK not found."
+            find "${PROJECT_DIR}/build/app/outputs" -type f || true
+            exit 1
+          fi
+
+          echo "Admin APK:"
+          echo "$ADMIN_APK"
+
+          cp "$ADMIN_APK" \
             "release/SADEE-DIMA-ADMIN.apk"
 
           test -f release/SADEE-DIMA-ADMIN.apk
 
-      # =========================
-      # VERIFY
-      # =========================
+          ls -lh release/SADEE-DIMA-ADMIN.apk
 
-      - name: Verify APKs
+
+      # =========================================================
+      # VERIFY BOTH APKs
+      # =========================================================
+
+      - name: Verify final APKs
         shell: bash
         run: |
           set -euo pipefail
 
-          echo "=== FINAL APKs ==="
+          echo ""
+          echo "======================================"
+          echo "FINAL APK FILES"
+          echo "======================================"
+
           ls -lh release/
+
+          echo ""
 
           test -f release/SADEE-DIMA-USER.apk
           test -f release/SADEE-DIMA-ADMIN.apk
 
-          echo "USER APK OK"
-          echo "ADMIN APK OK"
+          USER_SIZE=$(stat -c%s release/SADEE-DIMA-USER.apk)
+          ADMIN_SIZE=$(stat -c%s release/SADEE-DIMA-ADMIN.apk)
 
-      # =========================
-      # UPLOAD
-      # =========================
+          echo "USER APK SIZE : $USER_SIZE bytes"
+          echo "ADMIN APK SIZE: $ADMIN_SIZE bytes"
+
+          if [ "$USER_SIZE" -lt 1000000 ]; then
+            echo "ERROR: User APK looks too small."
+            exit 1
+          fi
+
+          if [ "$ADMIN_SIZE" -lt 1000000 ]; then
+            echo "ERROR: Admin APK looks too small."
+            exit 1
+          fi
+
+          echo ""
+          echo "======================================"
+          echo "BOTH APKs VERIFIED SUCCESSFULLY"
+          echo "======================================"
+
+
+      # =========================================================
+      # UPLOAD APK ARTIFACT
+      # =========================================================
 
       - name: Upload APKs
         uses: actions/upload-artifact@v4
@@ -203,3 +406,4 @@ jobs:
           name: SADEE-DIMA-APKs
           path: release/*.apk
           if-no-files-found: error
+          retention-days: 30
