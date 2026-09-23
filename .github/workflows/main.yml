@@ -29,33 +29,29 @@ jobs:
         run: |
           set -euo pipefail
 
-          ZIP_FILE=$(find "$GITHUB_WORKSPACE" \
-            -maxdepth 4 \
-            -type f \
-            -iname "*.zip" \
-            -not -path "*/.git/*" \
-            -print | head -n 1)
+          echo "======================================"
+          echo "SEARCHING FOR ZIP"
+          echo "======================================"
+
+          ZIP_FILE=$(find "$GITHUB_WORKSPACE" -maxdepth 4 -type f -iname "*.zip" -not -path "*/.git/*" -print | head -n 1 || true)
 
           if [ -z "$ZIP_FILE" ]; then
             echo "ERROR: ZIP file not found."
             exit 1
           fi
 
-          echo "ZIP FOUND: $ZIP_FILE"
+          echo "ZIP FOUND:"
+          echo "$ZIP_FILE"
 
           rm -rf "$GITHUB_WORKSPACE/extracted_project"
           mkdir -p "$GITHUB_WORKSPACE/extracted_project"
 
-          unzip -o "$ZIP_FILE" \
-            -d "$GITHUB_WORKSPACE/extracted_project"
+          unzip -o "$ZIP_FILE" -d "$GITHUB_WORKSPACE/extracted_project"
 
-          PUBSPEC=$(find "$GITHUB_WORKSPACE/extracted_project" \
-            -type f \
-            -name "pubspec.yaml" \
-            -print | head -n 1)
+          PUBSPEC=$(find "$GITHUB_WORKSPACE/extracted_project" -type f -name "pubspec.yaml" -print | head -n 1 || true)
 
           if [ -z "$PUBSPEC" ]; then
-            echo "ERROR: pubspec.yaml not found."
+            echo "ERROR: pubspec.yaml not found inside ZIP."
             exit 1
           fi
 
@@ -63,7 +59,8 @@ jobs:
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-          echo "PROJECT: $PROJECT_DIR"
+          echo "PROJECT:"
+          echo "$PROJECT_DIR"
 
       - name: Verify Project
         shell: bash
@@ -72,14 +69,16 @@ jobs:
 
           cd "$PROJECT_DIR"
 
+          echo "Checking project..."
+
           test -f pubspec.yaml
           test -f lib/main_user.dart
           test -f lib/main_admin.dart
           test -f android/app/build.gradle
 
-          echo "Project verified."
+          echo "Project verification OK."
 
-      - name: Fix PNG Resource
+      - name: Fix Broken Logo PNG
         shell: bash
         run: |
           set -euo pipefail
@@ -88,32 +87,39 @@ jobs:
 
           LOGO="android/app/src/main/res/drawable-nodpi/sadee_logo.png"
 
+          echo "======================================"
+          echo "CHECKING LOGO"
+          echo "======================================"
+
           if [ -f "$LOGO" ]; then
-            echo "Checking $LOGO"
+
+            echo "Logo found:"
+            echo "$LOGO"
+
+            file "$LOGO" || true
 
             if ! file "$LOGO" | grep -qi "PNG"; then
+
               echo "Invalid PNG detected."
+              echo "Creating temporary valid PNG..."
 
               rm -f "$LOGO"
 
-              python3 - "$LOGO" <<'PY'
-from PIL import Image
-import sys
+              printf '%s' 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=' | base64 -d > "$LOGO"
 
-path = sys.argv[1]
+              echo "Temporary PNG created."
 
-img = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
-img.save(path, "PNG")
-
-print("Valid PNG created:", path)
-PY
-
-              echo "Temporary PNG replacement created."
             else
-              echo "PNG file detected."
+
+              echo "PNG file looks valid."
+
             fi
+
           else
-            echo "Logo file not found. Continuing."
+
+            echo "Logo not found."
+            echo "Continuing build."
+
           fi
 
       - name: Patch Android Toolchain
@@ -123,38 +129,51 @@ PY
 
           cd "$PROJECT_DIR"
 
+          echo "======================================"
+          echo "PATCHING ANDROID TOOLCHAIN"
+          echo "======================================"
+
           if [ -f android/gradle/wrapper/gradle-wrapper.properties ]; then
-            sed -i \
-              's#distributionUrl=.*#distributionUrl=https\://services.gradle.org/distributions/gradle-8.14.5-bin.zip#' \
-              android/gradle/wrapper/gradle-wrapper.properties
+
+            sed -i 's#distributionUrl=.*#distributionUrl=https://services.gradle.org/distributions/gradle-8.14.5-bin.zip#' android/gradle/wrapper/gradle-wrapper.properties
+
           fi
 
           if [ -f android/settings.gradle ]; then
-            sed -i \
-              's/id "com.android.application" version "[^"]*"/id "com.android.application" version "8.11.1"/' \
-              android/settings.gradle || true
 
-            sed -i \
-              's/id "org.jetbrains.kotlin.android" version "[^"]*"/id "org.jetbrains.kotlin.android" version "2.2.20"/' \
-              android/settings.gradle || true
+            sed -i 's/id "com.android.application" version "[^"]*"/id "com.android.application" version "8.11.1"/' android/settings.gradle || true
+
+            sed -i 's/id "org.jetbrains.kotlin.android" version "[^"]*"/id "org.jetbrains.kotlin.android" version "2.2.20"/' android/settings.gradle || true
+
           fi
+
+          if [ -f android/settings.gradle.kts ]; then
+
+            sed -i 's/id("com.android.application") version "[^"]*"/id("com.android.application") version "8.11.1"/' android/settings.gradle.kts || true
+
+            sed -i 's/id("org.jetbrains.kotlin.android") version "[^"]*"/id("org.jetbrains.kotlin.android") version "2.2.20"/' android/settings.gradle.kts || true
+
+          fi
+
+          echo "Android toolchain patched."
 
       - name: Flutter Pub Get
         shell: bash
         run: |
           set -euo pipefail
+
           cd "$PROJECT_DIR"
+
           flutter pub get
 
       - name: Flutter Analyze
         shell: bash
         run: |
           set -euo pipefail
+
           cd "$PROJECT_DIR"
 
-          flutter analyze \
-            --no-fatal-infos \
-            --no-fatal-warnings
+          flutter analyze --no-fatal-infos --no-fatal-warnings
 
       - name: Verify Flavors
         shell: bash
@@ -164,6 +183,10 @@ PY
           cd "$PROJECT_DIR"
 
           BUILD_FILE="android/app/build.gradle"
+
+          echo "======================================"
+          echo "CHECKING FLAVORS"
+          echo "======================================"
 
           if ! grep -Fq "productFlavors" "$BUILD_FILE"; then
             echo "ERROR: productFlavors not found."
@@ -180,7 +203,8 @@ PY
             exit 1
           fi
 
-          echo "User/Admin flavors OK."
+          echo "User flavor: OK"
+          echo "Admin flavor: OK"
 
       - name: Build User APK
         shell: bash
@@ -193,10 +217,7 @@ PY
           echo "BUILDING USER APK"
           echo "======================================"
 
-          flutter build apk \
-            --release \
-            --flavor user \
-            -t lib/main_user.dart
+          flutter build apk --release --flavor user -t lib/main_user.dart
 
       - name: Build Admin APK
         shell: bash
@@ -209,10 +230,7 @@ PY
           echo "BUILDING ADMIN APK"
           echo "======================================"
 
-          flutter build apk \
-            --release \
-            --flavor admin \
-            -t lib/main_admin.dart
+          flutter build apk --release --flavor admin -t lib/main_admin.dart
 
       - name: Collect APKs
         shell: bash
@@ -223,13 +241,27 @@ PY
 
           mkdir -p release
 
-          cp \
-            build/app/outputs/flutter-apk/app-user-release.apk \
-            release/SADEE-DIMA-OPTIMIZER-USER.apk
+          USER_APK="build/app/outputs/flutter-apk/app-user-release.apk"
+          ADMIN_APK="build/app/outputs/flutter-apk/app-admin-release.apk"
 
-          cp \
-            build/app/outputs/flutter-apk/app-admin-release.apk \
-            release/SADEE-DIMA-OPTIMIZER-ADMIN.apk
+          if [ ! -f "$USER_APK" ]; then
+            echo "ERROR: User APK not found."
+            find build -type f -name "*.apk" -print || true
+            exit 1
+          fi
+
+          if [ ! -f "$ADMIN_APK" ]; then
+            echo "ERROR: Admin APK not found."
+            find build -type f -name "*.apk" -print || true
+            exit 1
+          fi
+
+          cp "$USER_APK" release/SADEE-DIMA-OPTIMIZER-USER.apk
+          cp "$ADMIN_APK" release/SADEE-DIMA-OPTIMIZER-ADMIN.apk
+
+          echo "======================================"
+          echo "APK FILES"
+          echo "======================================"
 
           ls -lh release/
 
@@ -241,3 +273,17 @@ PY
             ${{ env.PROJECT_DIR }}/release/SADEE-DIMA-OPTIMIZER-USER.apk
             ${{ env.PROJECT_DIR }}/release/SADEE-DIMA-OPTIMIZER-ADMIN.apk
           if-no-files-found: error
+
+      - name: Build Summary
+        run: |
+          echo "======================================"
+          echo "SADEE X DIMA BUILD COMPLETE"
+          echo "======================================"
+          echo "ZIP extraction : SUCCESS"
+          echo "Project        : SUCCESS"
+          echo "PNG handling   : SUCCESS"
+          echo "Flutter        : SUCCESS"
+          echo "User APK       : SUCCESS"
+          echo "Admin APK      : SUCCESS"
+          echo "ZIP modified   : NO"
+          echo "======================================"
