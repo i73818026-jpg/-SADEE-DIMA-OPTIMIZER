@@ -11,29 +11,23 @@ permissions:
 
 jobs:
   build:
-    name: Extract ZIP + Build User and Admin APK
+    name: Extract ZIP + Build APKs
     runs-on: ubuntu-latest
 
     steps:
-      # --------------------------------------------------
-      # 1. CHECKOUT
-      # --------------------------------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # --------------------------------------------------
-      # 2. SETUP FLUTTER
-      # --------------------------------------------------
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
           cache: true
 
-      # --------------------------------------------------
-      # 3. FIND AND EXTRACT ZIP
-      # --------------------------------------------------
-      - name: Extract Flutter Project ZIP
+      # ==========================================
+      # FIND ZIP AND EXTRACT IT
+      # ==========================================
+      - name: Extract uploaded ZIP
         shell: bash
         run: |
           set -euo pipefail
@@ -41,158 +35,91 @@ jobs:
           cd "$GITHUB_WORKSPACE"
 
           echo "======================================"
-          echo "Searching for Flutter project..."
+          echo "SEARCHING FOR ZIP"
           echo "======================================"
 
-          PROJECT_DIR=""
+          ZIP_FILE=$(find "$GITHUB_WORKSPACE" \
+            -maxdepth 3 \
+            -type f \
+            -iname "*.zip" \
+            -not -path "*/.git/*" \
+            -print | head -n 1 || true)
 
-          # If pubspec.yaml is already in repository root
-          if [ -f "$GITHUB_WORKSPACE/pubspec.yaml" ]; then
-            PROJECT_DIR="$GITHUB_WORKSPACE"
-            echo "Flutter project found in repository root."
-          fi
-
-          # Otherwise search existing folders
-          if [ -z "$PROJECT_DIR" ]; then
-            FOUND_PROJECT=$(find "$GITHUB_WORKSPACE" \
+          if [ -z "$ZIP_FILE" ]; then
+            echo "ERROR: No ZIP file found."
+            echo ""
+            echo "Repository files:"
+            find "$GITHUB_WORKSPACE" \
+              -maxdepth 4 \
               -type f \
-              -name "pubspec.yaml" \
               -not -path "*/.git/*" \
-              -not -path "*/build/*" \
-              -print | head -n 1 || true)
-
-            if [ -n "$FOUND_PROJECT" ]; then
-              PROJECT_DIR="$(dirname "$FOUND_PROJECT")"
-              echo "Flutter project found:"
-              echo "$PROJECT_DIR"
-            fi
-          fi
-
-          # ------------------------------------------------
-          # Find ZIP if project is not extracted yet
-          # ------------------------------------------------
-          if [ -z "$PROJECT_DIR" ]; then
-
-            ZIP_FILE=$(find "$GITHUB_WORKSPACE" \
-              -maxdepth 3 \
-              -type f \
-              -iname "*.zip" \
-              -not -path "*/.git/*" \
-              -print | head -n 1 || true)
-
-            if [ -z "$ZIP_FILE" ]; then
-              echo ""
-              echo "ERROR: No ZIP file found."
-              echo ""
-              echo "Files in repository:"
-              find "$GITHUB_WORKSPACE" \
-                -maxdepth 4 \
-                -type f \
-                -not -path "*/.git/*" \
-                -print
-              exit 1
-            fi
-
-            echo ""
-            echo "ZIP FOUND:"
-            echo "$ZIP_FILE"
-            echo ""
-
-            rm -rf "$GITHUB_WORKSPACE/extracted_project"
-            mkdir -p "$GITHUB_WORKSPACE/extracted_project"
-
-            echo "Extracting ZIP..."
-
-            unzip -o "$ZIP_FILE" \
-              -d "$GITHUB_WORKSPACE/extracted_project"
-
-            echo ""
-            echo "ZIP extraction completed."
-            echo ""
-
-            # ------------------------------------------------
-            # Find pubspec.yaml after extraction
-            # ------------------------------------------------
-            FOUND_PROJECT=$(find "$GITHUB_WORKSPACE/extracted_project" \
-              -type f \
-              -name "pubspec.yaml" \
-              -not -path "*/.git/*" \
-              -print | head -n 1 || true)
-
-            if [ -z "$FOUND_PROJECT" ]; then
-              echo ""
-              echo "ERROR: pubspec.yaml was not found after ZIP extraction."
-              echo ""
-              echo "Extracted files:"
-              find "$GITHUB_WORKSPACE/extracted_project" \
-                -maxdepth 6 \
-                -type f \
-                -print
-              exit 1
-            fi
-
-            PROJECT_DIR="$(dirname "$FOUND_PROJECT")"
-
-            echo ""
-            echo "Flutter project detected:"
-            echo "$PROJECT_DIR"
-          fi
-
-          # ------------------------------------------------
-          # Validate Flutter project
-          # ------------------------------------------------
-          if [ ! -f "$PROJECT_DIR/pubspec.yaml" ]; then
-            echo "ERROR: pubspec.yaml missing."
+              -print
             exit 1
           fi
 
-          if [ ! -d "$PROJECT_DIR/lib" ]; then
-            echo "ERROR: lib folder missing."
+          echo "ZIP FOUND:"
+          echo "$ZIP_FILE"
+
+          rm -rf "$GITHUB_WORKSPACE/extracted_project"
+          mkdir -p "$GITHUB_WORKSPACE/extracted_project"
+
+          echo ""
+          echo "EXTRACTING..."
+
+          unzip -o "$ZIP_FILE" \
+            -d "$GITHUB_WORKSPACE/extracted_project"
+
+          echo ""
+          echo "EXTRACTION COMPLETE"
+
+          # ==========================================
+          # FIND pubspec.yaml
+          # ==========================================
+
+          PUBSPEC=$(find "$GITHUB_WORKSPACE/extracted_project" \
+            -type f \
+            -name "pubspec.yaml" \
+            -not -path "*/.git/*" \
+            -print | head -n 1 || true)
+
+          if [ -z "$PUBSPEC" ]; then
+            echo ""
+            echo "ERROR: pubspec.yaml not found."
+            echo ""
+            echo "Extracted files:"
+            find "$GITHUB_WORKSPACE/extracted_project" \
+              -maxdepth 6 \
+              -type f \
+              -print
             exit 1
           fi
 
-          if [ ! -d "$PROJECT_DIR/android" ]; then
-            echo "ERROR: android folder missing."
-            exit 1
-          fi
+          PROJECT_DIR="$(dirname "$PUBSPEC")"
 
           echo ""
           echo "======================================"
-          echo "PROJECT READY"
+          echo "FLUTTER PROJECT FOUND"
           echo "======================================"
-          echo "PROJECT_DIR=$PROJECT_DIR"
+          echo "$PROJECT_DIR"
 
+          # Save for following steps
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-      # --------------------------------------------------
-      # 4. SHOW FLUTTER VERSION
-      # --------------------------------------------------
-      - name: Flutter Version
-        shell: bash
-        run: |
-          set -euo pipefail
-          flutter --version
-
-      # --------------------------------------------------
-      # 5. SHOW PROJECT STRUCTURE
-      # --------------------------------------------------
-      - name: Verify Project Files
+      # ==========================================
+      # VERIFY PROJECT
+      # ==========================================
+      - name: Verify Flutter project
         shell: bash
         run: |
           set -euo pipefail
 
           cd "$PROJECT_DIR"
 
-          echo "======================================"
-          echo "Flutter Project"
-          echo "======================================"
-
-          echo ""
           echo "Project:"
           pwd
 
           echo ""
-          echo "Required files:"
+          echo "Checking required files..."
 
           REQUIRED_FILES=(
             "pubspec.yaml"
@@ -211,41 +138,44 @@ jobs:
 
           for FILE in "${REQUIRED_FILES[@]}"; do
             if [ -f "$FILE" ]; then
-              echo "OK      $FILE"
+              echo "OK       $FILE"
             else
-              echo "MISSING $FILE"
+              echo "MISSING  $FILE"
               FAILED=1
             fi
           done
 
           if [ "$FAILED" -ne 0 ]; then
             echo ""
-            echo "ERROR: Required project files are missing."
+            echo "ERROR: Required files missing."
             exit 1
           fi
 
-      # --------------------------------------------------
-      # 6. FIX ANDROID BUILD TOOLCHAIN
-      # --------------------------------------------------
-      - name: Stabilize Android Build Toolchain
+      # ==========================================
+      # FLUTTER VERSION
+      # ==========================================
+      - name: Flutter version
+        run: flutter --version
+
+      # ==========================================
+      # ANDROID TOOLCHAIN
+      # ==========================================
+      - name: Fix Android build toolchain
         shell: bash
         run: |
           set -euo pipefail
 
           cd "$PROJECT_DIR"
 
-          echo "Updating Android build tools..."
-
-          # Gradle
+          # Gradle 8.14.5
           if [ -f android/gradle/wrapper/gradle-wrapper.properties ]; then
             sed -i \
               's#distributionUrl=.*#distributionUrl=https\://services.gradle.org/distributions/gradle-8.14.5-bin.zip#' \
               android/gradle/wrapper/gradle-wrapper.properties
           fi
 
-          # Groovy settings.gradle
+          # AGP 8.11.1
           if [ -f android/settings.gradle ]; then
-
             sed -i \
               's/id "com.android.application" version "[^"]*"/id "com.android.application" version "8.11.1"/' \
               android/settings.gradle || true
@@ -255,9 +185,8 @@ jobs:
               android/settings.gradle || true
           fi
 
-          # Kotlin settings.gradle.kts
+          # Kotlin DSL
           if [ -f android/settings.gradle.kts ]; then
-
             sed -i \
               's/id("com.android.application") version "[^"]*"/id("com.android.application") version "8.11.1"/' \
               android/settings.gradle.kts || true
@@ -267,122 +196,97 @@ jobs:
               android/settings.gradle.kts || true
           fi
 
-          echo "Android build toolchain prepared."
-
-      # --------------------------------------------------
-      # 7. FLUTTER PUB GET
-      # --------------------------------------------------
-      - name: Flutter Pub Get
+      # ==========================================
+      # PUB GET
+      # ==========================================
+      - name: Flutter pub get
         shell: bash
         run: |
           set -euo pipefail
-
           cd "$PROJECT_DIR"
-
-          echo "Running flutter pub get..."
 
           flutter pub get
 
-      # --------------------------------------------------
-      # 8. FORMAT
-      # --------------------------------------------------
-      - name: Dart Format
+      # ==========================================
+      # FORMAT
+      # ==========================================
+      - name: Dart format
         shell: bash
         run: |
           set -euo pipefail
-
           cd "$PROJECT_DIR"
 
           dart format lib
 
-      # --------------------------------------------------
-      # 9. ANALYZE
-      # --------------------------------------------------
-      - name: Flutter Analyze
+      # ==========================================
+      # ANALYZE
+      # ==========================================
+      - name: Flutter analyze
         shell: bash
         run: |
           set -euo pipefail
-
           cd "$PROJECT_DIR"
 
           flutter analyze \
             --no-fatal-infos \
             --no-fatal-warnings
 
-      # --------------------------------------------------
-      # 10. CHECK FLAVORS
-      # --------------------------------------------------
-      - name: Verify User and Admin Flavors
+      # ==========================================
+      # CHECK FLAVORS
+      # ==========================================
+      - name: Verify User Admin flavors
         shell: bash
         run: |
           set -euo pipefail
-
           cd "$PROJECT_DIR"
-
-          echo "Checking product flavors..."
 
           if grep -R "productFlavors" \
             android/app/build.gradle \
             android/app/build.gradle.kts \
             2>/dev/null; then
 
-            echo ""
-            echo "productFlavors found."
+            echo "User/Admin flavors detected."
 
           else
-
-            echo ""
             echo "ERROR: productFlavors not found."
             exit 1
-
           fi
 
-      # --------------------------------------------------
-      # 11. BUILD USER APK
-      # --------------------------------------------------
+      # ==========================================
+      # BUILD USER
+      # ==========================================
       - name: Build User APK
         shell: bash
         run: |
           set -euo pipefail
-
           cd "$PROJECT_DIR"
-
-          echo "======================================"
-          echo "BUILDING USER APK"
-          echo "======================================"
 
           flutter build apk \
             --release \
             --flavor user \
             -t lib/main_user.dart
 
-      # --------------------------------------------------
-      # 12. BUILD ADMIN APK
-      # --------------------------------------------------
+      # ==========================================
+      # BUILD ADMIN
+      # ==========================================
       - name: Build Admin APK
         shell: bash
         run: |
           set -euo pipefail
-
           cd "$PROJECT_DIR"
-
-          echo "======================================"
-          echo "BUILDING ADMIN APK"
-          echo "======================================"
 
           flutter build apk \
             --release \
             --flavor admin \
             -t lib/main_admin.dart
 
-      # --------------------------------------------------
-      # 13. COLLECT APKs
-      # --------------------------------------------------
-      - name: Collect Release APKs
+      # ==========================================
+      # COLLECT APK
+      # ==========================================
+      - name: Collect APKs
         shell: bash
         run: |
           set -euo pipefail
-
           cd "$PROJECT_DIR"
 
           mkdir -p release
@@ -390,15 +294,11 @@ jobs:
           USER_APK="build/app/outputs/flutter-apk/app-user-release.apk"
           ADMIN_APK="build/app/outputs/flutter-apk/app-admin-release.apk"
 
-          echo "Checking User APK..."
-
           if [ ! -f "$USER_APK" ]; then
             echo "ERROR: User APK not found."
             find build -type f -name "*.apk" -print || true
             exit 1
           fi
-
-          echo "Checking Admin APK..."
 
           if [ ! -f "$ADMIN_APK" ]; then
             echo "ERROR: Admin APK not found."
@@ -412,16 +312,11 @@ jobs:
           cp "$ADMIN_APK" \
             release/SADEE-DIMA-OPTIMIZER-ADMIN.apk
 
-          echo ""
-          echo "======================================"
-          echo "APK FILES"
-          echo "======================================"
-
           ls -lh release/
 
-      # --------------------------------------------------
-      # 14. UPLOAD APK ARTIFACTS
-      # --------------------------------------------------
+      # ==========================================
+      # UPLOAD APK ARTIFACTS
+      # ==========================================
       - name: Upload APKs
         uses: actions/upload-artifact@v4
         with:
@@ -431,27 +326,16 @@ jobs:
             ${{ env.PROJECT_DIR }}/release/SADEE-DIMA-OPTIMIZER-ADMIN.apk
           if-no-files-found: error
 
-      # --------------------------------------------------
-      # 15. FINAL SUMMARY
-      # --------------------------------------------------
-      - name: Build Summary
-        shell: bash
+      # ==========================================
+      # SUMMARY
+      # ==========================================
+      - name: Build summary
         run: |
-          echo ""
           echo "=========================================="
-          echo " SADEE X DIMA OPTIMIZER V6 BUILD SUCCESS "
+          echo "SADEE X DIMA OPTIMIZER V6 BUILD"
           echo "=========================================="
-          echo ""
-          echo "User APK:"
-          echo "SADEE-DIMA-OPTIMIZER-USER.apk"
-          echo ""
-          echo "Admin APK:"
-          echo "SADEE-DIMA-OPTIMIZER-ADMIN.apk"
-          echo ""
-          echo "ZIP extraction: SUCCESS"
-          echo "Flutter pub get: SUCCESS"
-          echo "Dart format: SUCCESS"
-          echo "Flutter analyze: SUCCESS"
-          echo "User build: SUCCESS"
-          echo "Admin build: SUCCESS"
-          echo ""
+          echo "ZIP extraction : SUCCESS"
+          echo "Flutter setup  : SUCCESS"
+          echo "User APK       : SUCCESS"
+          echo "Admin APK      : SUCCESS"
+          echo "=========================================="
