@@ -30,7 +30,6 @@ jobs:
 
           rm -rf source
           mkdir -p source
-
           unzip -o "$ZIP_FILE" -d source
 
       - name: Find Flutter Project
@@ -111,7 +110,6 @@ jobs:
               )
 
           p.write_text(text)
-          print("Dependencies fixed")
           PY
 
       - name: Fix SpinKit
@@ -151,31 +149,31 @@ jobs:
           from pathlib import Path
 
           p = Path("fresh_app/lib/screens/admin_home.dart")
-          lines = p.read_text().splitlines()
+          text = p.read_text()
 
-          for i in range(len(lines) - 1):
-              current = lines[i]
-              next_line = lines[i + 1]
+          old1 = '''"Duration: ${k['duration_days']}d | Status: $status
+Device: ${k['device_id'] ?? 'Not Bound'}",'''
 
-              if "Duration:" in current and "Status:" in current and "Device:" in next_line:
-                  indent = current[:len(current) - len(current.lstrip())]
+          new1 = '''"Duration: ${k['duration_days']}d | Status: $status\\n"
+                                "Device: ${k['device_id'] ?? 'Not Bound'}",'''
 
-                  lines[i] = (
-                      indent
-                      + '"Duration: ${k[\'duration_days\']}d | Status: $status\\n"'
-                  )
+          text = text.replace(old1, new1)
 
-                  lines[i + 1] = (
-                      indent
-                      + '"Device: ${k[\'device_id\'] ?? \'Not Bound\']}",'
-                  )
+          old2 = '''"Duration: ${k['duration_days']}d | Status: $status
+          Device: ${k['device_id'] ?? 'Not Bound'}",'''
 
-                  print("Admin Home fixed")
-                  break
-          else:
-              print("Admin Home already fixed or pattern not found")
+          text = text.replace(old2, new1)
 
-          p.write_text("\n".join(lines) + "\n")
+          # Fix the exact broken version from the previous workflow
+          broken = '''"Device: ${k['device_id'] ?? 'Not Bound']}",'''
+
+          correct = '''"Device: ${k['device_id'] ?? 'Not Bound'}",'''
+
+          text = text.replace(broken, correct)
+
+          p.write_text(text)
+
+          print("Admin Home fixed")
           PY
 
       - name: Remove Default Test
