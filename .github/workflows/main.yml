@@ -31,7 +31,7 @@ jobs:
           cache: true
 
       # ==========================================
-      # FIND AND EXTRACT ZIP
+      # FIND + EXTRACT ZIP
       # ==========================================
       - name: Extract Flutter ZIP
         shell: bash
@@ -50,7 +50,7 @@ jobs:
             -print | head -n 1 || true)
 
           if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: No ZIP file found."
+            echo "ERROR: ZIP file not found."
             exit 1
           fi
 
@@ -63,8 +63,6 @@ jobs:
 
           unzip -o "$ZIP_FILE" \
             -d "$GITHUB_WORKSPACE/extracted_project"
-
-          echo "ZIP extraction completed."
 
           PUBSPEC=$(find \
             "$GITHUB_WORKSPACE/extracted_project" \
@@ -96,22 +94,18 @@ jobs:
 
           cd "$PROJECT_DIR"
 
-          echo "======================================"
-          echo "VERIFYING PROJECT"
-          echo "======================================"
-
           test -f pubspec.yaml
           test -f lib/main_user.dart
           test -f lib/main_admin.dart
           test -f android/app/build.gradle
 
-          echo "pubspec.yaml       OK"
-          echo "main_user.dart     OK"
-          echo "main_admin.dart    OK"
-          echo "build.gradle       OK"
+          echo "pubspec.yaml    : OK"
+          echo "main_user.dart  : OK"
+          echo "main_admin.dart : OK"
+          echo "build.gradle    : OK"
 
       # ==========================================
-      # REPAIR LOGO PNG
+      # REPAIR BROKEN PNG
       # ==========================================
       - name: Repair Logo PNG
         shell: bash
@@ -135,36 +129,95 @@ jobs:
           echo "Original logo:"
           file "$LOGO" || true
 
-          echo "Installing Pillow..."
-
           python3 -m pip install \
             --quiet \
             --disable-pip-version-check \
             pillow
 
-          echo "Re-encoding PNG..."
-
-          if python3 -c "from PIL import Image; import sys, os; p=sys.argv[1]; t=p+'.fixed.png'; i=Image.open(p); i.load(); i.convert('RGBA').save(t, 'PNG', optimize=False, compress_level=6); os.replace(t,p); c=Image.open(p); c.load(); print('PNG REPAIR SUCCESS:', c.format, c.size)" "$LOGO"
-          then
-            echo "Logo successfully repaired."
-          else
-            echo "Pillow could not repair logo."
-            echo "Creating valid fallback PNG."
-
-            rm -f "$LOGO"
-
-            printf '%s' 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=' \
-              | base64 -d > "$LOGO"
-
-            echo "Fallback PNG created."
-          fi
+          python3 -c "from PIL import Image; import sys, os; p=sys.argv[1]; t=p+'.fixed.png'; i=Image.open(p); i.load(); i.convert('RGBA').save(t,'PNG',optimize=False,compress_level=6); os.replace(t,p); c=Image.open(p); c.load(); print('PNG OK:',c.format,c.size)" "$LOGO"
 
           echo "Final logo:"
           file "$LOGO"
           ls -lh "$LOGO"
 
       # ==========================================
-      # ANDROID TOOLCHAIN
+      # FIX MAINACTIVITY KOTLIN
+      # ==========================================
+      - name: Fix MainActivity Kotlin CPU Reader
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd "$PROJECT_DIR"
+
+          MAIN="android/app/src/main/kotlin/com/sadeedima/sadee_x_dima/MainActivity.kt"
+
+          echo "======================================"
+          echo "FIXING MAINACTIVITY KOTLIN"
+          echo "======================================"
+
+          if [ ! -f "$MAIN" ]; then
+            echo "ERROR: MainActivity.kt not found."
+            exit 1
+          fi
+
+          python3 -c 'import re,sys; p=sys.argv[1]; s=open(p,encoding="utf-8").read(); replacement="""    private fun readCpuUsage(): Double {
+        return try {
+            fun readCpu(): LongArray {
+                val line = File("/proc/stat").useLines { lines ->
+                    lines.firstOrNull { it.startsWith("cpu ") }
+                }
+
+                if (line == null) {
+                    return longArrayOf(0L, 0L)
+                }
+
+                val parts = line.trim().split(Regex("\\\\s+"))
+
+                val user = parts.getOrNull(1)?.toLongOrNull() ?: 0L
+                val nice = parts.getOrNull(2)?.toLongOrNull() ?: 0L
+                val system = parts.getOrNull(3)?.toLongOrNull() ?: 0L
+                val idle = parts.getOrNull(4)?.toLongOrNull() ?: 0L
+                val io = parts.getOrNull(5)?.toLongOrNull() ?: 0L
+                val irq = parts.getOrNull(6)?.toLongOrNull() ?: 0L
+                val softIrq = parts.getOrNull(7)?.toLongOrNull() ?: 0L
+                val steal = parts.getOrNull(8)?.toLongOrNull() ?: 0L
+
+                val total = user + nice + system + idle + io + irq + softIrq + steal
+                val active = total - idle - io
+
+                return longArrayOf(total, active)
+            }
+
+            val first = readCpu()
+
+            Thread.sleep(120)
+
+            val second = readCpu()
+
+            val totalDelta = second[0] - first[0]
+            val activeDelta = second[1] - first[1]
+
+            if (totalDelta <= 0L) {
+                0.0
+            } else {
+                (activeDelta.toDouble() / totalDelta * 100.0)
+                    .coerceIn(0.0, 100.0)
+            }
+        } catch (_: Exception) {
+            0.0
+        }
+    }
+"""; pattern=r"    private fun readCpuUsage\\(\\):Double=.*?(?=    private fun hasAllFilesAccess)"; ns,n=re.subn(pattern,replacement,s,flags=re.S); print("CPU FUNCTION REPLACED:",n); assert n==1,"readCpuUsage function not found"; open(p,"w",encoding="utf-8").write(ns)' "$MAIN"
+
+          echo "Checking patched function..."
+
+          grep -n -A45 "private fun readCpuUsage" "$MAIN"
+
+          echo "MainActivity Kotlin patch completed."
+
+      # ==========================================
+      # PATCH ANDROID TOOLCHAIN
       # ==========================================
       - name: Patch Android Toolchain
         shell: bash
@@ -178,11 +231,9 @@ jobs:
           echo "======================================"
 
           if [ -f android/gradle/wrapper/gradle-wrapper.properties ]; then
-
             sed -i \
               's#distributionUrl=.*#distributionUrl=https://services.gradle.org/distributions/gradle-8.14.5-bin.zip#' \
               android/gradle/wrapper/gradle-wrapper.properties
-
           fi
 
           if [ -f android/settings.gradle ]; then
@@ -193,6 +244,14 @@ jobs:
 
             sed -i \
               's/id "org.jetbrains.kotlin.android" version "[^"]*"/id "org.jetbrains.kotlin.android" version "2.2.20"/' \
+              android/settings.gradle || true
+
+            sed -i \
+              's/id("com.android.application") version "[^"]*"/id("com.android.application") version "8.11.1"/' \
+              android/settings.gradle || true
+
+            sed -i \
+              's/id("org.jetbrains.kotlin.android") version "[^"]*"/id("org.jetbrains.kotlin.android") version "2.2.20"/' \
               android/settings.gradle || true
 
           fi
@@ -212,6 +271,18 @@ jobs:
           echo "Android toolchain patched."
 
       # ==========================================
+      # FLUTTER CLEAN
+      # ==========================================
+      - name: Flutter Clean
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd "$PROJECT_DIR"
+
+          flutter clean
+
+      # ==========================================
       # PUB GET
       # ==========================================
       - name: Flutter Pub Get
@@ -222,6 +293,18 @@ jobs:
           cd "$PROJECT_DIR"
 
           flutter pub get
+
+      # ==========================================
+      # FORMAT
+      # ==========================================
+      - name: Dart Format
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd "$PROJECT_DIR"
+
+          dart format lib
 
       # ==========================================
       # ANALYZE
@@ -240,7 +323,7 @@ jobs:
       # ==========================================
       # VERIFY FLAVORS
       # ==========================================
-      - name: Verify User And Admin Flavors
+      - name: Verify Product Flavors
         shell: bash
         run: |
           set -euo pipefail
@@ -273,7 +356,7 @@ jobs:
           echo "admin flavor   : OK"
 
       # ==========================================
-      # BUILD USER APK
+      # BUILD USER
       # ==========================================
       - name: Build User APK
         shell: bash
@@ -292,7 +375,7 @@ jobs:
             -t lib/main_user.dart
 
       # ==========================================
-      # BUILD ADMIN APK
+      # BUILD ADMIN
       # ==========================================
       - name: Build Admin APK
         shell: bash
@@ -311,7 +394,7 @@ jobs:
             -t lib/main_admin.dart
 
       # ==========================================
-      # COLLECT APKs
+      # COLLECT APK
       # ==========================================
       - name: Collect APK Files
         shell: bash
@@ -381,6 +464,7 @@ jobs:
           echo "======================================"
           echo "ZIP extraction : SUCCESS"
           echo "PNG repair     : SUCCESS"
+          echo "Kotlin patch   : SUCCESS"
           echo "Flutter        : SUCCESS"
           echo "User APK       : SUCCESS"
           echo "Admin APK      : SUCCESS"
