@@ -33,7 +33,12 @@ jobs:
           echo "SEARCHING FOR ZIP"
           echo "======================================"
 
-          ZIP_FILE=$(find "$GITHUB_WORKSPACE" -maxdepth 4 -type f -iname "*.zip" -not -path "*/.git/*" -print | head -n 1 || true)
+          ZIP_FILE=$(find "$GITHUB_WORKSPACE" \
+            -maxdepth 4 \
+            -type f \
+            -iname "*.zip" \
+            -not -path "*/.git/*" \
+            -print | head -n 1 || true)
 
           if [ -z "$ZIP_FILE" ]; then
             echo "ERROR: ZIP file not found."
@@ -46,12 +51,16 @@ jobs:
           rm -rf "$GITHUB_WORKSPACE/extracted_project"
           mkdir -p "$GITHUB_WORKSPACE/extracted_project"
 
-          unzip -o "$ZIP_FILE" -d "$GITHUB_WORKSPACE/extracted_project"
+          unzip -o "$ZIP_FILE" \
+            -d "$GITHUB_WORKSPACE/extracted_project"
 
-          PUBSPEC=$(find "$GITHUB_WORKSPACE/extracted_project" -type f -name "pubspec.yaml" -print | head -n 1 || true)
+          PUBSPEC=$(find "$GITHUB_WORKSPACE/extracted_project" \
+            -type f \
+            -name "pubspec.yaml" \
+            -print | head -n 1 || true)
 
           if [ -z "$PUBSPEC" ]; then
-            echo "ERROR: pubspec.yaml not found inside ZIP."
+            echo "ERROR: pubspec.yaml not found."
             exit 1
           fi
 
@@ -69,8 +78,6 @@ jobs:
 
           cd "$PROJECT_DIR"
 
-          echo "Checking project..."
-
           test -f pubspec.yaml
           test -f lib/main_user.dart
           test -f lib/main_admin.dart
@@ -78,7 +85,7 @@ jobs:
 
           echo "Project verification OK."
 
-      - name: Fix Broken Logo PNG
+      - name: Repair Logo PNG
         shell: bash
         run: |
           set -euo pipefail
@@ -88,39 +95,67 @@ jobs:
           LOGO="android/app/src/main/res/drawable-nodpi/sadee_logo.png"
 
           echo "======================================"
-          echo "CHECKING LOGO"
+          echo "REPAIRING LOGO PNG"
           echo "======================================"
 
-          if [ -f "$LOGO" ]; then
-
-            echo "Logo found:"
+          if [ ! -f "$LOGO" ]; then
+            echo "Logo not found:"
             echo "$LOGO"
-
-            file "$LOGO" || true
-
-            if ! file "$LOGO" | grep -qi "PNG"; then
-
-              echo "Invalid PNG detected."
-              echo "Creating temporary valid PNG..."
-
-              rm -f "$LOGO"
-
-              printf '%s' 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=' | base64 -d > "$LOGO"
-
-              echo "Temporary PNG created."
-
-            else
-
-              echo "PNG file looks valid."
-
-            fi
-
-          else
-
-            echo "Logo not found."
-            echo "Continuing build."
-
+            exit 1
           fi
+
+          echo "Original logo:"
+          file "$LOGO" || true
+
+          python3 -m pip install --quiet --disable-pip-version-check pillow
+
+          python3 -c '
+import sys
+import os
+from PIL import Image
+
+path = sys.argv[1]
+temp = path + ".fixed.png"
+
+try:
+    img = Image.open(path)
+    print("Input format:", img.format)
+    print("Input mode:", img.mode)
+    print("Input size:", img.size)
+
+    img.load()
+
+    converted = img.convert("RGBA")
+
+    converted.save(
+        temp,
+        format="PNG",
+        optimize=False,
+        compress_level=6
+    )
+
+    os.replace(temp, path)
+
+    check = Image.open(path)
+    check.load()
+
+    print("Output format:", check.format)
+    print("Output mode:", check.mode)
+    print("Output size:", check.size)
+
+    if check.format != "PNG":
+        raise RuntimeError("Output is not PNG")
+
+    print("PNG repair SUCCESS")
+
+except Exception as e:
+    print("PNG repair failed:", e)
+    sys.exit(1)
+' "$LOGO"
+
+          echo "Final logo:"
+          file "$LOGO"
+          ls -lh "$LOGO"
 
       - name: Patch Android Toolchain
         shell: bash
@@ -134,25 +169,29 @@ jobs:
           echo "======================================"
 
           if [ -f android/gradle/wrapper/gradle-wrapper.properties ]; then
-
-            sed -i 's#distributionUrl=.*#distributionUrl=https://services.gradle.org/distributions/gradle-8.14.5-bin.zip#' android/gradle/wrapper/gradle-wrapper.properties
-
+            sed -i \
+              's#distributionUrl=.*#distributionUrl=https://services.gradle.org/distributions/gradle-8.14.5-bin.zip#' \
+              android/gradle/wrapper/gradle-wrapper.properties
           fi
 
           if [ -f android/settings.gradle ]; then
+            sed -i \
+              's/id "com.android.application" version "[^"]*"/id "com.android.application" version "8.11.1"/' \
+              android/settings.gradle || true
 
-            sed -i 's/id "com.android.application" version "[^"]*"/id "com.android.application" version "8.11.1"/' android/settings.gradle || true
-
-            sed -i 's/id "org.jetbrains.kotlin.android" version "[^"]*"/id "org.jetbrains.kotlin.android" version "2.2.20"/' android/settings.gradle || true
-
+            sed -i \
+              's/id "org.jetbrains.kotlin.android" version "[^"]*"/id "org.jetbrains.kotlin.android" version "2.2.20"/' \
+              android/settings.gradle || true
           fi
 
           if [ -f android/settings.gradle.kts ]; then
+            sed -i \
+              's/id("com.android.application") version "[^"]*"/id("com.android.application") version "8.11.1"/' \
+              android/settings.gradle.kts || true
 
-            sed -i 's/id("com.android.application") version "[^"]*"/id("com.android.application") version "8.11.1"/' android/settings.gradle.kts || true
-
-            sed -i 's/id("org.jetbrains.kotlin.android") version "[^"]*"/id("org.jetbrains.kotlin.android") version "2.2.20"/' android/settings.gradle.kts || true
-
+            sed -i \
+              's/id("org.jetbrains.kotlin.android") version "[^"]*"/id("org.jetbrains.kotlin.android") version "2.2.20"/' \
+              android/settings.gradle.kts || true
           fi
 
           echo "Android toolchain patched."
@@ -173,7 +212,9 @@ jobs:
 
           cd "$PROJECT_DIR"
 
-          flutter analyze --no-fatal-infos --no-fatal-warnings
+          flutter analyze \
+            --no-fatal-infos \
+            --no-fatal-warnings
 
       - name: Verify Flavors
         shell: bash
@@ -217,7 +258,10 @@ jobs:
           echo "BUILDING USER APK"
           echo "======================================"
 
-          flutter build apk --release --flavor user -t lib/main_user.dart
+          flutter build apk \
+            --release \
+            --flavor user \
+            -t lib/main_user.dart
 
       - name: Build Admin APK
         shell: bash
@@ -230,7 +274,10 @@ jobs:
           echo "BUILDING ADMIN APK"
           echo "======================================"
 
-          flutter build apk --release --flavor admin -t lib/main_admin.dart
+          flutter build apk \
+            --release \
+            --flavor admin \
+            -t lib/main_admin.dart
 
       - name: Collect APKs
         shell: bash
@@ -256,8 +303,11 @@ jobs:
             exit 1
           fi
 
-          cp "$USER_APK" release/SADEE-DIMA-OPTIMIZER-USER.apk
-          cp "$ADMIN_APK" release/SADEE-DIMA-OPTIMIZER-ADMIN.apk
+          cp "$USER_APK" \
+            release/SADEE-DIMA-OPTIMIZER-USER.apk
+
+          cp "$ADMIN_APK" \
+            release/SADEE-DIMA-OPTIMIZER-ADMIN.apk
 
           echo "======================================"
           echo "APK FILES"
@@ -280,8 +330,7 @@ jobs:
           echo "SADEE X DIMA BUILD COMPLETE"
           echo "======================================"
           echo "ZIP extraction : SUCCESS"
-          echo "Project        : SUCCESS"
-          echo "PNG handling   : SUCCESS"
+          echo "PNG repair     : SUCCESS"
           echo "Flutter        : SUCCESS"
           echo "User APK       : SUCCESS"
           echo "Admin APK      : SUCCESS"
