@@ -14,7 +14,7 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Find and Extract Project ZIP
+      - name: Extract Project ZIP
         shell: bash
         run: |
           set -e
@@ -22,17 +22,14 @@ jobs:
           ZIP_FILE=$(find . -maxdepth 1 -type f -iname "*.zip" | head -n 1)
 
           if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: No ZIP file found."
+            echo "ERROR: ZIP file not found"
             exit 1
           fi
 
-          echo "Found ZIP: $ZIP_FILE"
+          echo "Found: $ZIP_FILE"
 
           mkdir -p project
           unzip -o "$ZIP_FILE" -d project
-
-          echo "Extracted project files:"
-          find project -maxdepth 3 -type f | head -100
 
       - name: Find Flutter Project
         shell: bash
@@ -42,11 +39,11 @@ jobs:
           PROJECT_DIR=$(find project -name pubspec.yaml -type f -print -quit | xargs dirname)
 
           if [ -z "$PROJECT_DIR" ]; then
-            echo "ERROR: pubspec.yaml not found."
+            echo "ERROR: pubspec.yaml not found"
             exit 1
           fi
 
-          echo "Flutter project found at: $PROJECT_DIR"
+          echo "Flutter project: $PROJECT_DIR"
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
       - name: Setup Java
@@ -69,9 +66,9 @@ jobs:
         working-directory: ${{ env.PROJECT_DIR }}
         run: flutter pub get
 
-      - name: Build Release APK
+      - name: Build User APK
         working-directory: ${{ env.PROJECT_DIR }}
-        run: flutter build apk --release
+        run: flutter build apk --release -t lib/main_user.dart
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
