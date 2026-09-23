@@ -26,12 +26,10 @@ jobs:
             exit 1
           fi
 
-          echo "ZIP: $ZIP_FILE"
-
           mkdir -p source
           unzip -o "$ZIP_FILE" -d source
 
-      - name: Find Flutter Source
+      - name: Find Flutter Project
         shell: bash
         run: |
           set -e
@@ -43,7 +41,6 @@ jobs:
             exit 1
           fi
 
-          echo "Source: $SOURCE_DIR"
           echo "SOURCE_DIR=$SOURCE_DIR" >> "$GITHUB_ENV"
 
       - name: Setup Java
@@ -67,7 +64,6 @@ jobs:
             fresh_app
 
       - name: Copy App Files
-        shell: bash
         run: |
           set -e
 
@@ -75,24 +71,41 @@ jobs:
           mkdir -p fresh_app/lib
 
           cp -R "$SOURCE_DIR/lib/." fresh_app/lib/
+          cp "$SOURCE_DIR/pubspec.yaml" fresh_app/pubspec.yaml
 
           if [ -d "$SOURCE_DIR/assets" ]; then
             cp -R "$SOURCE_DIR/assets" fresh_app/
           fi
 
-          cp "$SOURCE_DIR/pubspec.yaml" fresh_app/pubspec.yaml
-
-      - name: Fix system_info2 Version
-        shell: bash
-        working-directory: fresh_app
+      - name: Fix Dependencies
         run: |
-          sed -i 's/system_info2: *\^1\.0\.1/system_info2: ^4.1.0/g'
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("fresh_app/pubspec.yaml")
+          s = p.read_text()
+
+          s = s.replace(
+              "system_info2: ^1.0.1",
+              "system_info2: ^4.1.0"
+          )
+
+          p.write_text(s)
+          PY
 
       - name: Fix SpinKit Const Error
-        shell: bash
-        working-directory: fresh_app
         run: |
-          sed -i 's/const SpinKitSphereGlider(/SpinKitSphereGlider(/g'
+          python3 - <<'PY'
+          from pathlib import Path
+
+          for p in Path("fresh_app/lib").rglob("*.dart"):
+              s = p.read_text()
+              s = s.replace(
+                  "const SpinKitSphereGlider(",
+                  "SpinKitSphereGlider("
+              )
+              p.write_text(s)
+          PY
 
       - name: Get Dependencies
         working-directory: fresh_app
