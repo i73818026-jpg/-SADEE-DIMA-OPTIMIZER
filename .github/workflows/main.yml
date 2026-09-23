@@ -86,7 +86,13 @@ jobs:
         shell: bash
         working-directory: fresh_app
         run: |
-          sed -i 's/system_info2: *\^1\.0\.1/system_info2: ^4.1.0/g' pubspec.yaml
+          sed -i 's/system_info2: *\^1\.0\.1/system_info2: ^4.1.0/g'
+
+      - name: Fix SpinKit Const Error
+        shell: bash
+        working-directory: fresh_app
+        run: |
+          sed -i 's/const SpinKitSphereGlider(/SpinKitSphereGlider(/g'
 
       - name: Get Dependencies
         working-directory: fresh_app
