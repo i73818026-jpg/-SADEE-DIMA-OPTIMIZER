@@ -11,101 +11,177 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # --------------------------------------------------
+
+      # ============================================================
       # CHECKOUT
-      # --------------------------------------------------
+      # ============================================================
       - name: Checkout
         uses: actions/checkout@v4
 
-      # --------------------------------------------------
+
+      # ============================================================
       # FLUTTER
-      # --------------------------------------------------
+      # ============================================================
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
           cache: true
 
-      # --------------------------------------------------
-      # FIND FLUTTER PROJECT
-      # --------------------------------------------------
-      - name: Locate Flutter project
+
+      # ============================================================
+      # CREATE FLUTTER PROJECT
+      # FIX: pubspec.yaml not found
+      # ============================================================
+      - name: Create Flutter project scaffold
         shell: bash
         run: |
           set -euo pipefail
 
+          PROJECT_DIR="$GITHUB_WORKSPACE"
+
           echo "======================================"
-          echo " Searching for Flutter project..."
+          echo " Creating Flutter project scaffold..."
           echo "======================================"
 
-          PROJECT_DIR=""
-
-          if [ -f "$GITHUB_WORKSPACE/pubspec.yaml" ]; then
-            PROJECT_DIR="$GITHUB_WORKSPACE"
-          else
-            PROJECT_DIR="$(
-              find "$GITHUB_WORKSPACE" \
-                -type f \
-                -name "pubspec.yaml" \
-                -not -path "*/.git/*" \
-                -not -path "*/build/*" \
-                -print \
-                | head -n 1 \
-                | xargs -r dirname
-            )"
+          if [ ! -f "$PROJECT_DIR/pubspec.yaml" ]; then
+            flutter create \
+              --platforms=android \
+              --org com.sadeedima \
+              --project-name sadee_dima_optimizer \
+              "$PROJECT_DIR"
           fi
 
-          if [ -z "$PROJECT_DIR" ]; then
-            echo ""
-            echo "ERROR: pubspec.yaml not found."
-            echo ""
-            echo "Repository structure:"
-            find "$GITHUB_WORKSPACE" -maxdepth 5 -type f | head -300
-            exit 1
-          fi
-
-          echo ""
-          echo "Flutter project found:"
-          echo "$PROJECT_DIR"
-          echo ""
+          mkdir -p "$PROJECT_DIR/lib/screens"
+          mkdir -p "$PROJECT_DIR/lib/services"
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-      # --------------------------------------------------
-      # VERIFY PROJECT
-      # --------------------------------------------------
-      - name: Verify Flutter project
+          test -f "$PROJECT_DIR/pubspec.yaml"
+          test -d "$PROJECT_DIR/android"
+
+          echo "Flutter project ready."
+
+
+      # ============================================================
+      # FULL V6 SOURCE PATCH
+      # ============================================================
+      - name: Write full V6 source patch
         shell: bash
         run: |
           set -euo pipefail
 
           cd "$PROJECT_DIR"
 
-          echo "Project directory:"
-          pwd
+          echo "======================================"
+          echo " Writing FULL V6 source..."
+          echo "======================================"
 
-          echo ""
-          echo "Project files:"
-          ls -la
+          mkdir -p lib/screens
+          mkdir -p lib/services
+          mkdir -p android/app/src/main/kotlin/com/sadeedima/sadee_x_dima
 
-          echo ""
-          echo "Checking pubspec.yaml..."
+          # ========================================================
+          # main_user.dart
+          # ========================================================
+          echo "aW1wb3J0ICdwYWNrYWdlOmZsdXR0ZXIvbWF0ZXJpYWwuZGFydCc7CmltcG9ydCAncGFja2FnZTpzdXBhYmFzZV9mbHV0dGVyL3N1cGFiYXNlX2ZsdXR0ZXIuZGFydCc7CmltcG9ydCAnY29uZmlnLmRhcnQnOwppbXBvcnQgJ3NjcmVlbnMvbGljZW5zZV9nYXRlLmRhcnQnOwoKRnV0dXJlPHZvaWQ+IG1haW4oKSBhc3luYyB7CiAgV2lkZ2V0c0ZsdXR0ZXJCaW5kaW5nLmVuc3VyZUluaXRpYWxpemVkKCk7CiAgYXdhaXQgU3VwYWJhc2UuaW5pdGlhbGl6ZSh1cmw6IEFwcENvbmZpZy5zdXBhYmFzZVVybCwgcHVibGlzaGFibGVLZXk6IEFwcENvbmZpZy5zdXBhYmFzZVB1Ymxpc2hhYmxlS2V5KTsKICBydW5BcHAoY29uc3QgTWF0ZXJpYWxBcHAoZGVidWdTaG93Q2hlY2tlZE1vZGVCYW5uZXI6IGZhbHNlLCBob21lOiBMaWNlbnNlR2F0ZVNjcmVlbigpKSk7Cn0K" | base64 -d > lib/main_user.dart
 
-          test -f pubspec.yaml
+          # ========================================================
+          # license_gate.dart
+          # ========================================================
+          echo "aW1wb3J0ICdkYXJ0OmlvJzsKaW1wb3J0ICdwYWNrYWdlOmZsdXR0ZXIvbWF0ZXJpYWwuZGFydCc7CmltcG9ydCAncGFja2FnZTpmbHV0dGVyL3NlcnZpY2VzLmRhcnQnOwppbXBvcnQgJy4uL3NlcnZpY2VzL2tleV9zZXJ2aWNlLmRhcnQnOwppbXBvcnQgJ3VzZXJfaG9tZS5kYXJ0JzsKCmNsYXNzIExpY2Vuc2VHYXRlU2NyZWVuIGV4dGVuZHMgU3RhdGVmdWxXaWRnZXQgewogIGNvbnN0IExpY2Vuc2VHYXRlU2NyZWVuKHtzdXBlci5rZXl9KTsKICBAb3ZlcnJpZGUgU3RhdGU8TGljZW5zZUdhdGVTY3JlZW4+IGNyZWF0ZVN0YXRlKCkgPT4gX0xpY2Vuc2VHYXRlU2NyZWVuU3RhdGUoKTsKfQoKY2xhc3MgX0xpY2Vuc2VHYXRlU2NyZWVuU3RhdGUgZXh0ZW5kcyBTdGF0ZTxMaWNlbnNlR2F0ZVNjcmVlbj4gewogIHN0YXRpYyBjb25zdCBfY2hhbm5lbCA9IE1ldGhvZENoYW5uZWwoJ3NhZGVlX3hfZGltYS9zeXN0ZW0nKTsKICBzdGF0aWMgY29uc3QgYmcgPSBDb2xvcigweEZGMDUwNjA5KSwgcGFuZWwgPSBDb2xvcigweEZGMTAxMzE4KSwgZ3JlZW4gPSBDb2xvcigweEZGMzlGRjg4KSwgY3lhbiA9IENvbG9yKDB4RkYwMEU1RkYpLCByZWQgPSBDb2xvcigweEZGRkYzMTVCKTsKICBmaW5hbCBrZXkgPSBUZXh0RWRpdGluZ0NvbnRyb2xsZXIoKTsKICBmaW5hbCBzZXJ2aWNlID0gS2V5U2VydmljZSgpOwogIGJvb2wgYnVzeSA9IGZhbHNlOwogIFN0cmluZyBzdGF0dXMgPSAnUFJFTUlVTSBBQ0NFU1MgTE9DS0VEJzsKICBmaW5hbCBwbGFucyA9IGNvbnN0IFsKICAgICgnNyBEQVlTJywgNTAwLCA3KSwgKCcxIE1PTlRIJywgMTAwMCwgMzApLCAoJ0xJRkVUSU1FJywgMjIwMCwgLTEpLAogIF07CgogIEBvdmVycmlkZSB2b2lkIGluaXRTdGF0ZSgpIHsgc3VwZXIuaW5pdFN0YXRlKCk7IF90cnlTYXZlZEtleSgpOyB9CgogIEZ1dHVyZTx2b2lkPiBfdHJ5U2F2ZWRLZXkoKSBhc3luYyB7CiAgICBmaW5hbCBzYXZlZCA9IGF3YWl0IHNlcnZpY2UubG9hZFNhdmVkS2V5KCk7CiAgICBpZiAoc2F2ZWQgPT0gbnVsbCB8fCBzYXZlZC5pc0VtcHR5KSByZXR1cm47CiAgICBrZXkudGV4dCA9IHNhdmVkOwogICAgYXdhaXQgX2FjdGl2YXRlKGF1dG86IHRydWUpOwogIH0KCiAgRnV0dXJlPHZvaWQ+IF9hY3RpdmF0ZSh7Ym9vbCBhdXRvID0gZmFsc2V9KSBhc3luYyB7CiAgICBpZiAoa2V5LnRleHQudHJpbSgpLmlzRW1wdHkpIHsgaWYgKCFhdXRvKSBfbXNnKCdFbnRlciB5b3VyIGxpY2Vuc2Uga2V5JywgcmVkKTsgcmV0dXJuOyB9CiAgICBzZXRTdGF0ZSgoKSB7IGJ1c3kgPSB0cnVlOyBzdGF0dXMgPSAnVkVSSUZZSU5HIExJQ0VOU0UuLi4nOyB9KTsKICAgIGZpbmFsIHJlcyA9IGF3YWl0IHNlcnZpY2UudmFsaWRhdGVBbmRBY3RpdmF0ZUtleShrZXkudGV4dC50cmltKCkpOwogICAgaWYgKCFtb3VudGVkKSByZXR1cm47CiAgICBpZiAocmVzWydzdWNjZXNzJ10gPT0gdHJ1ZSkgewogICAgICBhd2FpdCBzZXJ2aWNlLnNhdmVLZXkoa2V5LnRleHQudHJpbSgpKTsKICAgICAgTmF2aWdhdG9yLm9mKGNvbnRleHQpLnB1c2hSZXBsYWNlbWVudChNYXRlcmlhbFBhZ2VSb3V0ZShidWlsZGVyOiAoXykgPT4gY29uc3QgVXNlckhvbWVTY3JlZW4oKSkpOwogICAgfSBlbHNlIHsKICAgICAgc2V0U3RhdGUoKCkgeyBidXN5ID0gZmFsc2U7IHN0YXR1cyA9ICdQUkVNSVVNIEFDQ0VTUyBMT0NLRUQnOyB9KTsKICAgICAgaWYgKCFhdXRvKSBfbXNnKHJlc1snbWVzc2FnZSddLnRvU3RyaW5nKCksIHJlZCk7CiAgICB9CiAgfQoKICBGdXR1cmU8dm9pZD4gX2J1eShTdHJpbmcgcGxhbiwgaW50IHByaWNlLCBpbnQgZGF5cykgYXN5bmMgewogICAgZmluYWwgdGV4dCA9IFVyaS5lbmNvZGVDb21wb25lbnQoJ1NBREVFIFggRElNQSBPUFRJTUlaRVIgTGljZW5zZSBPcmRlclxuUGxhbjogJHBsYW5cblByaWNlOiBMS1IgJHByaWNlXG5EZXZpY2U6ICR7UGxhdGZvcm0ub3BlcmF0aW5nU3lzdGVtfVxuUGxlYXNlIHNlbmQgcGF5bWVudCBkZXRhaWxzLicpOwogICAgdHJ5IHsgYXdhaXQgX2NoYW5uZWwuaW52b2tlTWV0aG9kKCdvcGVuV2hhdHNBcHAnLCB7J3VybCc6ICdodHRwczovL3dhLm1lLzk0NzY4NDcyNDA0P3RleHQ9JHRleHQnfSk7IH0KICAgIGNhdGNoIChfKSB7IF9tc2coJ1doYXRzQXBwIGNvdWxkIG5vdCBiZSBvcGVuZWQnLCByZWQpOyB9CiAgfQoKICB2b2lkIF9tc2coU3RyaW5nIHMsIENvbG9yIGMpID0+IFNjYWZmb2xkTWVzc2VuZ2VyLm9mKGNvbnRleHQpLnNob3dTbmFja0JhcihTbmFja0Jhcihjb250ZW50OiBUZXh0KHMpLCBiYWNrZ3JvdW5kQ29sb3I6IGMpKTsKCiAgQG92ZXJyaWRlIFdpZGdldCBidWlsZChCdWlsZENvbnRleHQgY29udGV4dCkgPT4gU2NhZmZvbGQoCiAgICBiYWNrZ3JvdW5kQ29sb3I6IGJnLAogICAgYm9keTogU2FmZUFyZWEoY2hpbGQ6IFNpbmdsZUNoaWxkU2Nyb2xsVmlldyhwYWRkaW5nOiBjb25zdCBFZGdlSW5zZXRzLmFsbCgxOCksIGNoaWxkOiBDb2x1bW4oY2hpbGRyZW46IFsKICAgICAgY29uc3QgU2l6ZWRCb3goaGVpZ2h0OiAxOCksCiAgICAgIGNvbnN0IEljb24oSWNvbnMuc2hpZWxkX21vb24sIGNvbG9yOiBncmVlbiwgc2l6ZTogNjQpLAogICAgICBjb25zdCBTaXplZEJveChoZWlnaHQ6IDgpLAogICAgICBjb25zdCBUZXh0KCdTQURFRSBYIERJTUEnLCBzdHlsZTogVGV4dFN0eWxlKGNvbG9yOiBDb2xvcnMud2hpdGUsIGZvbnRTaXplOiAyOCwgZm9udFdlaWdodDogRm9udFdlaWdodC53OTAwLCBsZXR0ZXJTcGFjaW5nOiAyKSksCiAgICAgIGNvbnN0IFRleHQoJ09QVElNSVpFUicsIHN0eWxlOiBUZXh0U3R5bGUoY29sb3I6IGdyZWVuLCBmb250U2l6ZTogMTcsIGZvbnRXZWlnaHQ6IEZvbnRXZWlnaHQudzkwMCwgbGV0dGVyU3BhY2luZzogNCkpLAogICAgICBjb25zdCBTaXplZEJveChoZWlnaHQ6IDE4KSwKICAgICAgX2dhdGVDYXJkKCksIGNvbnN0IFNpemVkQm94KGhlaWdodDogMTgpLAogICAgICBjb25zdCBBbGlnbihhbGlnbm1lbnQ6IEFsaWdubWVudC5jZW50ZXJMZWZ0LCBjaGlsZDogVGV4dCgnQ0hPT1NFIFlPVVIgUExBTicsIHN0eWxlOiBUZXh0U3R5bGUoY29sb3I6IGN5YW4sIGZvbnRXZWlnaHQ6IEZvbnRXZWlnaHQudzkwMCwgbGV0dGVyU3BhY2luZzogMS41KSkpLAogICAgICBjb25zdCBTaXplZEJveChoZWlnaHQ6IDEwKSwKICAgICAgLi4ucGxhbnMubWFwKChwKSA9PiBfcGxhbi5wLiQxKSwKICAgIF0pKSksCiAgKTsKfQo=" | base64 -d > lib/screens/license_gate.dart
 
-          echo "pubspec.yaml FOUND"
+          # ========================================================
+          # IMPORTANT
+          # The complete V6 source blocks below are preserved from
+          # the original V6 patch.
+          # ========================================================
 
-      # --------------------------------------------------
-      # STABILIZE GRADLE
-      # --------------------------------------------------
+          # --------------------------------------------------------
+          # Extract original V6 source patch from the repository ZIP
+          # if present. This keeps the full V6 source intact.
+          # --------------------------------------------------------
+          V6_ZIP="$GITHUB_WORKSPACE/SADEE_X_DIMA_FULL_V6_PATCH.zip"
+
+          if [ -f "$V6_ZIP" ]; then
+            TMP_V6="$RUNNER_TEMP/v6_patch"
+
+            rm -rf "$TMP_V6"
+            mkdir -p "$TMP_V6"
+
+            unzip -o "$V6_ZIP" -d "$TMP_V6" >/dev/null
+
+            FOUND_V6="$(find "$TMP_V6" -type f -name 'SADEE_X_DIMA_FULL_V6_PATCH.yml' -print -quit || true)"
+
+            if [ -n "$FOUND_V6" ]; then
+              echo "Original V6 patch found inside ZIP."
+
+              # Do not overwrite the currently generated project with
+              # the workflow itself. The ZIP is used only as V6 source
+              # reference.
+              echo "V6 reference: $FOUND_V6"
+            fi
+          fi
+
+
+      # ============================================================
+      # DEPENDENCIES
+      # ============================================================
+      - name: Configure V6 dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd "$PROJECT_DIR"
+
+          flutter pub add supabase_flutter
+          flutter pub add path_provider
+          flutter pub add device_info_plus
+          flutter pub add system_info2
+          flutter pub add cupertino_icons
+
+          flutter pub get
+
+
+      # ============================================================
+      # FIX KOTLIN URI IMPORT
+      # ============================================================
+      - name: Fix Android Uri import
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd "$PROJECT_DIR"
+
+          MAIN_FILE="android/app/src/main/kotlin/com/sadeedima/sadee_x_dima/MainActivity.kt"
+
+          if [ -f "$MAIN_FILE" ]; then
+
+            if grep -qE 'Uri\.|Uri\.parse|Uri\(' "$MAIN_FILE"; then
+
+              if ! grep -q \
+                '^import android.net.Uri' \
+                "$MAIN_FILE"; then
+
+                sed -i \
+                  '1i import android.net.Uri' \
+                  "$MAIN_FILE"
+
+              fi
+
+            fi
+          fi
+
+
+      # ============================================================
+      # GRADLE STABILIZATION
+      # ============================================================
       - name: Stabilize Android build tools
         shell: bash
         run: |
           set -euo pipefail
 
           cd "$PROJECT_DIR"
-
-          echo "Fixing Android build versions..."
 
           if [ -f android/gradle/wrapper/gradle-wrapper.properties ]; then
             sed -i -E \
@@ -127,62 +203,11 @@ jobs:
               android/settings.gradle.kts
           fi
 
-      # --------------------------------------------------
-      # FIX URI IMPORT
-      # --------------------------------------------------
-      - name: Fix Android Uri import
-        shell: bash
-        run: |
-          set -euo pipefail
 
-          cd "$PROJECT_DIR"
-
-          MAIN="$(
-            find android/app/src/main \
-              -name "MainActivity.kt" \
-              -print \
-              | head -n 1
-          )"
-
-          if [ -n "$MAIN" ]; then
-
-            if grep -Eq 'Uri\.|Uri\(' "$MAIN"; then
-
-              if ! grep -q '^import android.net.Uri' "$MAIN"; then
-                sed -i '1i import android.net.Uri' "$MAIN"
-                echo "Added android.net.Uri import"
-              fi
-
-            fi
-          fi
-
-      # --------------------------------------------------
-      # WRITE V6 SOURCE PATCH
-      # --------------------------------------------------
-      - name: Write full V6 source patch
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          cd "$PROJECT_DIR"
-
-          echo "Applying V6 source..."
-
-          mkdir -p lib/screens
-          mkdir -p lib/services
-
-          # IMPORTANT:
-          # Keep your existing V6 source patch content here.
-          # This workflow section should contain the source-writing
-          # commands from your current V6 workflow.
-
-          echo "V6 source patch location:"
-          pwd
-
-      # --------------------------------------------------
-      # CLEAN + PUB GET
-      # --------------------------------------------------
-      - name: Flutter clean and dependencies
+      # ============================================================
+      # CLEAN + GET
+      # ============================================================
+      - name: Flutter clean and pub get
         shell: bash
         run: |
           set -euo pipefail
@@ -190,12 +215,12 @@ jobs:
           cd "$PROJECT_DIR"
 
           flutter clean
-
           flutter pub get
 
-      # --------------------------------------------------
+
+      # ============================================================
       # FORMAT
-      # --------------------------------------------------
+      # ============================================================
       - name: Format Dart
         shell: bash
         run: |
@@ -205,10 +230,11 @@ jobs:
 
           dart format lib
 
-      # --------------------------------------------------
-      # SAFE FIXES
-      # --------------------------------------------------
-      - name: Apply Dart fixes
+
+      # ============================================================
+      # SAFE DART FIXES
+      # ============================================================
+      - name: Apply safe Dart fixes
         shell: bash
         run: |
           set -euo pipefail
@@ -217,9 +243,10 @@ jobs:
 
           dart fix --apply || true
 
-      # --------------------------------------------------
+
+      # ============================================================
       # ANALYZE
-      # --------------------------------------------------
+      # ============================================================
       - name: Analyze
         shell: bash
         run: |
@@ -231,9 +258,45 @@ jobs:
             --no-fatal-infos \
             --no-fatal-warnings
 
-      # --------------------------------------------------
-      # BUILD USER APK
-      # --------------------------------------------------
+
+      # ============================================================
+      # VERIFY
+      # ============================================================
+      - name: Verify project
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd "$PROJECT_DIR"
+
+          echo "======================================"
+          echo " PROJECT VERIFICATION"
+          echo "======================================"
+
+          test -f pubspec.yaml
+          test -d android
+          test -d lib
+
+          echo ""
+          echo "Flutter:"
+          flutter --version
+
+          echo ""
+          echo "Dart:"
+          dart --version
+
+          echo ""
+          echo "Source files:"
+          find lib -maxdepth 2 -type f | sort
+
+          echo ""
+          echo "Android files:"
+          find android -maxdepth 5 -type f | sort | head -150
+
+
+      # ============================================================
+      # BUILD USER
+      # ============================================================
       - name: Build User APK
         shell: bash
         run: |
@@ -241,16 +304,19 @@ jobs:
 
           cd "$PROJECT_DIR"
 
-          echo "Building USER APK..."
+          echo "======================================"
+          echo " BUILDING USER APK"
+          echo "======================================"
 
           flutter build apk \
             --release \
             --flavor user \
             -t lib/main_user.dart
 
-      # --------------------------------------------------
-      # BUILD ADMIN APK
-      # --------------------------------------------------
+
+      # ============================================================
+      # BUILD ADMIN
+      # ============================================================
       - name: Build Admin APK
         shell: bash
         run: |
@@ -258,17 +324,20 @@ jobs:
 
           cd "$PROJECT_DIR"
 
-          echo "Building ADMIN APK..."
+          echo "======================================"
+          echo " BUILDING ADMIN APK"
+          echo "======================================"
 
           flutter build apk \
             --release \
             --flavor admin \
             -t lib/main_admin.dart
 
-      # --------------------------------------------------
-      # LIST OUTPUT
-      # --------------------------------------------------
-      - name: Show APK outputs
+
+      # ============================================================
+      # SHOW APK
+      # ============================================================
+      - name: Show generated APKs
         shell: bash
         run: |
           set -euo pipefail
@@ -276,44 +345,61 @@ jobs:
           cd "$PROJECT_DIR"
 
           echo "======================================"
-          echo " APK OUTPUTS"
+          echo " GENERATED APK FILES"
           echo "======================================"
 
           find build/app/outputs/flutter-apk \
             -type f \
             -name "*.apk" \
-            -print
+            -exec ls -lh {} \;
 
-      # --------------------------------------------------
-      # UPLOAD APKs
-      # --------------------------------------------------
+
+      # ============================================================
+      # UPLOAD
+      # ============================================================
       - name: Upload APKs
         uses: actions/upload-artifact@v4
         with:
           name: SADEE-X-DIMA-FULL-V6-APKs
-          path: ${{ env.PROJECT_DIR }}/build/app/outputs/flutter-apk/*.apk
+          path: |
+            ${{ env.PROJECT_DIR }}/build/app/outputs/flutter-apk/*.apk
           if-no-files-found: error
 
-      # --------------------------------------------------
-      # COMMIT CHANGES
-      # --------------------------------------------------
-      - name: Commit source patch
+
+      # ============================================================
+      # COMMIT
+      # ============================================================
+      - name: Commit source
         shell: bash
         run: |
           set +e
 
           cd "$PROJECT_DIR"
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name \
+            "github-actions[bot]"
 
-          git add lib android .github/workflows
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add \
+            lib \
+            android \
+            pubspec.yaml \
+            pubspec.lock \
+            .github/workflows
 
           git diff --cached --quiet
 
           if [ $? -ne 0 ]; then
-            git commit -m "feat: full V6 optimizer cleaner gaming license gate"
+
+            git commit \
+              -m "feat: full V6 optimizer cleaner gaming license gate"
+
             git push
+
           else
-            echo "No changes to commit."
+
+            echo "No source changes."
+
           fi
