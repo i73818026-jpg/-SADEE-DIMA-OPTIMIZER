@@ -14,7 +14,8 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Find and Extract ZIP
+      # Find the ZIP uploaded to the repository and extract it
+      - name: Extract Project ZIP
         shell: bash
         run: |
           set -e
@@ -22,13 +23,18 @@ jobs:
           ZIP_FILE=$(find . -maxdepth 1 -type f -iname "*.zip" | head -n 1)
 
           if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: ZIP file not found"
+            echo "ERROR: No ZIP file found in repository root."
             exit 1
           fi
 
+          echo "Using ZIP: $ZIP_FILE"
+
+          rm -rf source
           mkdir -p source
+
           unzip -o "$ZIP_FILE" -d source
 
+      # Find pubspec.yaml automatically
       - name: Find Flutter Project
         shell: bash
         run: |
@@ -37,18 +43,21 @@ jobs:
           SOURCE_DIR=$(find source -name pubspec.yaml -type f -print -quit | xargs dirname)
 
           if [ -z "$SOURCE_DIR" ]; then
-            echo "ERROR: pubspec.yaml not found"
+            echo "ERROR: pubspec.yaml was not found."
             exit 1
           fi
 
+          echo "Flutter source: $SOURCE_DIR"
           echo "SOURCE_DIR=$SOURCE_DIR" >> "$GITHUB_ENV"
 
+      # Java 17
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
+      # Flutter
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
@@ -56,14 +65,21 @@ jobs:
           channel: stable
           cache: true
 
+      # Create a new supported Flutter Android project
       - name: Create Fresh Flutter Project
         run: |
+          set -e
+
+          rm -rf fresh_app
+
           flutter create \
             --project-name sadee_x_dima \
             --platforms android \
             fresh_app
 
-      - name: Copy App Files
+      # Copy original application code
+      - name: Copy Application Files
+        shell: bash
         run: |
           set -e
 
@@ -71,14 +87,19 @@ jobs:
           mkdir -p fresh_app/lib
 
           cp -R "$SOURCE_DIR/lib/." fresh_app/lib/
-          cp "$SOURCE_DIR/pubspec.yaml" fresh_app/pubspec.yaml
 
           if [ -d "$SOURCE_DIR/assets" ]; then
-            cp -R "$SOURCE_DIR/assets" fresh_app/
+            cp -R "$SOURCE_DIR/assets" fresh_app/assets
           fi
 
-      - name: Fix Dependencies
+          cp "$SOURCE_DIR/pubspec.yaml" fresh_app/pubspec.yaml
+
+      # Fix dependencies safely
+      - name: Fix Pubspec Dependencies
+        shell: bash
         run: |
+          set -e
+
           python3 - <<'PY'
           from pathlib import Path
 
@@ -90,31 +111,65 @@ jobs:
               "system_info2: ^4.1.0"
           )
 
+          if "flutter_spinkit:" not in s:
+              marker = "dependencies:\n"
+              if marker in s:
+                  s = s.replace(
+                      marker,
+                      marker + "  flutter_spinkit: ^5.2.1\n",
+                      1
+                  )
+
           p.write_text(s)
           PY
 
-      - name: Fix SpinKit Const Error
+      # Fix the invalid SpinKitSphereGlider widget
+      - name: Fix SpinKit Widget
+        shell: bash
         run: |
+          set -e
+
           python3 - <<'PY'
           from pathlib import Path
 
-          for p in Path("fresh_app/lib").rglob("*.dart"):
+          root = Path("fresh_app/lib")
+
+          for p in root.rglob("*.dart"):
               s = p.read_text()
+
               s = s.replace(
                   "const SpinKitSphereGlider(",
-                  "SpinKitSphereGlider("
+                  "SpinKitThreeBounce("
               )
+
+              s = s.replace(
+                  "SpinKitSphereGlider(",
+                  "SpinKitThreeBounce("
+              )
+
               p.write_text(s)
           PY
 
-      - name: Get Dependencies
+      # Install packages
+      - name: Flutter Pub Get
         working-directory: fresh_app
         run: flutter pub get
 
-      - name: Build APK
+      # Check the project
+      - name: Flutter Analyze
         working-directory: fresh_app
-        run: flutter build apk --release -t lib/main_user.dart
+        run: flutter analyze --no-fatal-infos
+        continue-on-error: true
 
+      # Build User APK
+      - name: Build Release APK
+        working-directory: fresh_app
+        run: |
+          flutter build apk \
+            --release \
+            -t lib/main_user.dart
+
+      # Upload APK
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
