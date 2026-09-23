@@ -1,156 +1,26 @@
-name: Build Android APK
-
-on:
-  workflow_dispatch:
-  push:
-    branches:
-      - main
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Extract ZIP
-        shell: bash
+      - name: Set User Package ID
         run: |
-          set -e
-          ZIP_FILE=$(find . -maxdepth 1 -type f -iname "*.zip" | head -n 1)
-
-          if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: ZIP file not found"
-            exit 1
-          fi
-
-          rm -rf source
-          mkdir -p source
-          unzip -o "$ZIP_FILE" -d source
-
-      - name: Find Project
-        shell: bash
-        run: |
-          set -e
-
-          SOURCE_DIR=$(find source -name pubspec.yaml -type f -print -quit | xargs dirname)
-
-          if [ -z "$SOURCE_DIR" ]; then
-            echo "ERROR: pubspec.yaml not found"
-            exit 1
-          fi
-
-          echo "SOURCE_DIR=$SOURCE_DIR" >> "$GITHUB_ENV"
-
-      - name: Setup Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: "3.35.7"
-          channel: stable
-          cache: true
-
-      - name: Create Android Project
-        run: |
-          set -e
-
-          rm -rf fresh_app
-
-          flutter create \
-            --project-name sadee_x_dima \
-            --platforms android \
-            fresh_app
-
-      - name: Copy App
-        run: |
-          set -e
-
-          rm -rf fresh_app/lib
-          mkdir -p fresh_app/lib
-
-          cp -R "$SOURCE_DIR/lib/." fresh_app/lib/
-          cp "$SOURCE_DIR/pubspec.yaml" fresh_app/pubspec.yaml
-
-          if [ -d "$SOURCE_DIR/assets" ]; then
-            cp -R "$SOURCE_DIR/assets" fresh_app/assets
-          fi
-
-      - name: Fix Dependencies
-        run: |
-          set -e
-
           python3 - <<'PY'
           from pathlib import Path
+          import re
 
-          p = Path("fresh_app/pubspec.yaml")
+          p = Path("fresh_app/android/app/build.gradle.kts")
           s = p.read_text()
 
-          s = s.replace(
-              "system_info2: ^1.0.1",
-              "system_info2: ^4.1.0"
+          s = re.sub(
+              r'applicationId\s*=\s*"[^"]+"',
+              'applicationId = "com.sadee.xdima.user"',
+              s,
+              count=1
           )
 
-          if "flutter_spinkit:" not in s:
-              s = s.replace(
-                  "dependencies:\n",
-                  "dependencies:\n  flutter_spinkit: ^5.2.1\n",
-                  1
-              )
-
           p.write_text(s)
+          print("User package ID set")
           PY
-
-      - name: Fix SpinKit
-        run: |
-          set -e
-
-          python3 - <<'PY'
-          from pathlib import Path
-
-          root = Path("fresh_app/lib")
-
-          for p in root.rglob("*.dart"):
-              s = p.read_text()
-
-              s = s.replace(
-                  "const SpinKitSphereGlider(",
-                  "SpinKitThreeBounce("
-              )
-
-              s = s.replace(
-                  "SpinKitSphereGlider(",
-                  "SpinKitThreeBounce("
-              )
-
-              p.write_text(s)
-
-          print("SpinKit fixed")
-          PY
-
-      - name: Remove Tests
-        run: |
-          rm -rf fresh_app/test
-
-      - name: Pub Get
-        working-directory: fresh_app
-        run: flutter pub get
-
-      - name: Analyze
-        working-directory: fresh_app
-        run: flutter analyze --no-fatal-infos
-        continue-on-error: true
 
       - name: Build User APK
         working-directory: fresh_app
         run: |
-          set -e
-
           flutter build apk \
             --release \
             -t lib/main_user.dart
@@ -159,10 +29,31 @@ jobs:
             build/app/outputs/flutter-apk/app-release.apk \
             build/app/outputs/flutter-apk/sadee-x-dima-user.apk
 
+      - name: Set Admin Package ID
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          p = Path("fresh_app/android/app/build.gradle.kts")
+          s = p.read_text()
+
+          s = re.sub(
+              r'applicationId\s*=\s*"[^"]+"',
+              'applicationId = "com.sadee.xdima.admin"',
+              s,
+              count=1
+          )
+
+          p.write_text(s)
+          print("Admin package ID set")
+          PY
+
       - name: Build Admin APK
         working-directory: fresh_app
         run: |
-          set -e
+          flutter clean
+          flutter pub get
 
           flutter build apk \
             --release \
@@ -171,12 +62,3 @@ jobs:
           cp \
             build/app/outputs/flutter-apk/app-release.apk \
             build/app/outputs/flutter-apk/sadee-x-dima-admin.apk
-
-      - name: Upload APKs
-        uses: actions/upload-artifact@v4
-        with:
-          name: sadee-x-dima-apks
-          path: |
-            fresh_app/build/app/outputs/flutter-apk/sadee-x-dima-user.apk
-            fresh_app/build/app/outputs/flutter-apk/sadee-x-dima-admin.apk
-          if-no-files-found: error
