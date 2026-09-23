@@ -11,44 +11,29 @@ permissions:
 
 jobs:
   build:
-    name: Build User & Admin APKs
+    name: Build User and Admin APKs
     runs-on: ubuntu-latest
 
     steps:
 
-      # ============================================================
-      # 1. CHECKOUT
-      # ============================================================
-      - name: Checkout Repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      # ============================================================
-      # 2. FIND ZIP
-      # ============================================================
       - name: Find Project ZIP
         shell: bash
         run: |
           set -euo pipefail
 
-          echo "Searching for project ZIP..."
-
-          ZIP_FILE=$(find . -maxdepth 2 -type f -iname "*.zip" \
-            ! -path "./.git/*" \
-            | sort | tail -n 1)
+          ZIP_FILE="$(find . -maxdepth 2 -type f -iname '*.zip' ! -path './.git/*' | sort | tail -n 1)"
 
           if [ -z "$ZIP_FILE" ]; then
-            echo "::error::No project ZIP found."
+            echo "::error::No ZIP file found."
             exit 1
           fi
 
-          echo "Using ZIP:"
-          echo "$ZIP_FILE"
-
           echo "ZIP_FILE=$ZIP_FILE" >> "$GITHUB_ENV"
+          echo "Using: $ZIP_FILE"
 
-      # ============================================================
-      # 3. EXTRACT
-      # ============================================================
       - name: Extract Project
         shell: bash
         run: |
@@ -59,54 +44,39 @@ jobs:
 
           unzip -q "$ZIP_FILE" -d extracted
 
-          echo "Extracted files:"
-          find extracted -maxdepth 3 -type f | head -100
+          echo "Project extracted."
 
-      # ============================================================
-      # 4. FIND PUBSPEC
-      # ============================================================
       - name: Locate Flutter Project
         shell: bash
         run: |
           set -euo pipefail
 
-          PUBSPEC=$(find extracted -name pubspec.yaml -type f | head -n 1)
+          PUBSPEC="$(find extracted -name pubspec.yaml -type f | head -n 1)"
 
           if [ -z "$PUBSPEC" ]; then
             echo "::error::pubspec.yaml not found."
             exit 1
           fi
 
-          PROJECT_DIR=$(dirname "$PUBSPEC")
+          PROJECT_DIR="$(dirname "$PUBSPEC")"
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
           echo "Flutter project:"
           echo "$PROJECT_DIR"
 
-          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-
-      # ============================================================
-      # 5. SETUP FLUTTER
-      # ============================================================
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
           cache: true
 
-      # ============================================================
-      # 6. FLUTTER VERSION
-      # ============================================================
-      - name: Flutter Doctor
+      - name: Flutter Version
         working-directory: ${{ env.PROJECT_DIR }}
-        shell: bash
         run: |
           flutter --version
-          flutter doctor -v
 
-      # ============================================================
-      # 7. CREATE ANDROID IF MISSING
-      # ============================================================
-      - name: Ensure Android Project Exists
+      - name: Ensure Android Project
         working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
         run: |
@@ -114,40 +84,29 @@ jobs:
 
           if [ ! -f android/app/build.gradle ]; then
             echo "Android project missing."
-            echo "Creating Android project..."
-
             flutter create \
               --platforms=android \
               --org com.sadeedima \
               .
           else
-            echo "Android project already exists."
+            echo "Android project exists."
           fi
 
-      # ============================================================
-      # 8. PATCH GRADLE WRAPPER
-      # ============================================================
       - name: Configure Gradle
         working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
         run: |
           set -euo pipefail
 
-          GRADLE_FILE="android/gradle/wrapper/gradle-wrapper.properties"
+          FILE="android/gradle/wrapper/gradle-wrapper.properties"
 
-          if [ -f "$GRADLE_FILE" ]; then
+          if [ -f "$FILE" ]; then
             sed -i \
-              's#distributionUrl=.*#distributionUrl=https\\://services.gradle.org/distributions/gradle-8.14.5-all.zip#' \
-              "$GRADLE_FILE"
+              's#distributionUrl=.*#distributionUrl=https\://services.gradle.org/distributions/gradle-8.14.5-all.zip#' \
+              "$FILE"
           fi
 
-          echo "Gradle configuration:"
-          cat "$GRADLE_FILE"
-
-      # ============================================================
-      # 9. PATCH AGP + KOTLIN
-      # ============================================================
-      - name: Configure Android Gradle Plugin and Kotlin
+      - name: Configure Android Versions
         working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
         run: |
@@ -156,216 +115,62 @@ jobs:
           SETTINGS="android/settings.gradle"
           BUILD="android/build.gradle"
 
-          # AGP
           if [ -f "$SETTINGS" ]; then
-            sed -i \
-              -E 's/(com\.android\.application[^0-9]*)([0-9]+\.[0-9]+\.[0-9]+)/\18.11.1/g' \
-              "$SETTINGS"
 
-            sed -i \
-              -E 's/(com\.android\.library[^0-9]*)([0-9]+\.[0-9]+\.[0-9]+)/\18.11.1/g' \
-              "$SETTINGS"
+            sed -i -E \
+              's/(com\.android\.application[^0-9]*)([0-9]+\.[0-9]+\.[0-9]+)/\18.11.1/g' \
+              "$SETTINGS" || true
 
-            # Kotlin
-            sed -i \
-              -E 's/(org\.jetbrains\.kotlin\.android[^0-9]*)([0-9]+\.[0-9]+\.[0-9]+)/\12.2.20/g' \
-              "$SETTINGS"
+            sed -i -E \
+              's/(org\.jetbrains\.kotlin\.android[^0-9]*)([0-9]+\.[0-9]+\.[0-9]+)/\12.2.20/g' \
+              "$SETTINGS" || true
+
           fi
 
-          # Old Gradle style projects
           if [ -f "$BUILD" ]; then
 
-            sed -i \
-              -E "s/com\.android\.tools\.build:gradle:[0-9]+\.[0-9]+\.[0-9]+/com.android.tools.build:gradle:8.11.1/g" \
-              "$BUILD"
+            sed -i -E \
+              's/com\.android\.tools\.build:gradle:[0-9]+\.[0-9]+\.[0-9]+/com.android.tools.build:gradle:8.11.1/g' \
+              "$BUILD" || true
 
-            sed -i \
-              -E "s/ext\.kotlin_version[[:space:]]*=[[:space:]]*['\"][^'\"]+['\"]/ext.kotlin_version = '2.2.20'/g" \
-              "$BUILD"
+            sed -i -E \
+              "s/ext\.kotlin_version[[:space:]]*=[[:space:]]*['\"][^'\"]+['\"]/ext.kotlin_version = '2.2.20'/g" \
+              "$BUILD" || true
 
-            sed -i \
-              -E "s/org\.jetbrains\.kotlin:kotlin-gradle-plugin:[0-9]+\.[0-9]+\.[0-9]+/org.jetbrains.kotlin:kotlin-gradle-plugin:2.2.20/g" \
-              "$BUILD"
           fi
 
-          echo "===== settings.gradle ====="
-          cat "$SETTINGS" || true
-
-          echo "===== android/build.gradle ====="
-          cat "$BUILD" || true
-
-      # ============================================================
-      # 10. FORCE USER / ADMIN FLAVORS
-      # ============================================================
-      - name: Configure User and Admin Flavors
+      - name: Fix MainActivity Uri
         working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
         run: |
           set -euo pipefail
 
-          APP_BUILD="android/app/build.gradle"
+          FILE="$(find android/app/src/main/kotlin \
+            -name MainActivity.kt \
+            -type f \
+            | head -n 1)"
 
-          if [ ! -f "$APP_BUILD" ]; then
-            echo "::error::android/app/build.gradle not found."
-            exit 1
-          fi
-
-          python3 <<'PY'
-from pathlib import Path
-import re
-
-p = Path("android/app/build.gradle")
-s = p.read_text()
-
-# Ensure flavor dimensions exists
-if "flavorDimensions" not in s:
-    marker = "android {"
-    if marker in s:
-        s = s.replace(
-            marker,
-            marker + "\n    flavorDimensions \"app\"",
-            1
-        )
-
-# Remove existing productFlavors block if present
-s = re.sub(
-    r'\n\s*productFlavors\s*\{.*?\n\s*\}',
-    '',
-    s,
-    flags=re.S
-)
-
-flavors = r'''
-
-    flavorDimensions "app"
-
-    productFlavors {
-        user {
-            dimension "app"
-            applicationId "com.sadeedima.optimizer"
-            versionNameSuffix "-user"
-            manifestPlaceholders = [appLabel: "SADEE X DIMA OPTIMIZER"]
-        }
-
-        admin {
-            dimension "app"
-            applicationId "com.sadeedima.optimizer.admin"
-            versionNameSuffix "-admin"
-            manifestPlaceholders = [appLabel: "SADEE X DIMA ADMIN"]
-        }
-    }
-'''
-
-# Insert before final android closing brace
-idx = s.rfind("}")
-if idx == -1:
-    raise SystemExit("android/app/build.gradle malformed")
-
-s = s[:idx] + flavors + "\n" + s[idx:]
-
-p.write_text(s)
-
-print("User/Admin flavors configured.")
-PY
-
-          echo "===== FINAL app/build.gradle ====="
-          cat "$APP_BUILD"
-
-      # ============================================================
-      # 11. FIX MAIN ACTIVITY URI
-      # ============================================================
-      - name: Auto Fix MainActivity Kotlin Imports
-        working-directory: ${{ env.PROJECT_DIR }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          KOTLIN_FILE="android/app/src/main/kotlin/com/sadeedima/sadee_x_dima/MainActivity.kt"
-
-          echo "Looking for:"
-          echo "$KOTLIN_FILE"
-
-          if [ ! -f "$KOTLIN_FILE" ]; then
-            echo "::warning::MainActivity.kt not found at expected path."
-
-            KOTLIN_FILE=$(find android/app/src/main/kotlin \
-              -name MainActivity.kt \
-              -type f \
-              | head -n 1)
-
-          fi
-
-          if [ -z "${KOTLIN_FILE:-}" ] || [ ! -f "$KOTLIN_FILE" ]; then
+          if [ -z "$FILE" ]; then
             echo "::error::MainActivity.kt not found."
             exit 1
           fi
 
           echo "Using:"
-          echo "$KOTLIN_FILE"
+          echo "$FILE"
 
-          python3 - "$KOTLIN_FILE" <<'PY'
-import sys
-from pathlib import Path
+          if grep -qE 'Uri\.(parse|from)' "$FILE"; then
 
-path = Path(sys.argv[1])
-text = path.read_text()
+            if ! grep -q '^import android\.net\.Uri$' "$FILE"; then
+              sed -i '/^package /a import android.net.Uri' "$FILE"
+              echo "FIXED: android.net.Uri import added."
+            else
+              echo "Uri import already exists."
+            fi
 
-# ------------------------------------------------------------
-# FIX android.net.Uri
-# ------------------------------------------------------------
-if "Uri.parse(" in text or "Uri.from" in text:
+          else
+            echo "No Uri usage detected."
+          fi
 
-    if "import android.net.Uri" not in text:
-
-        lines = text.splitlines()
-
-        package_index = None
-
-        for i, line in enumerate(lines):
-            if line.startswith("package "):
-                package_index = i
-                break
-
-        if package_index is not None:
-            lines.insert(package_index + 1, "")
-            lines.insert(package_index + 2, "import android.net.Uri")
-            text = "\n".join(lines) + "\n"
-        else:
-            text = "import android.net.Uri\n" + text
-
-        path.write_text(text)
-
-        print("FIXED: android.net.Uri import added.")
-
-    else:
-        print("OK: android.net.Uri already imported.")
-
-else:
-    print("No Uri usage detected.")
-
-PY
-
-          echo "===== MainActivity imports ====="
-          grep '^import ' "$KOTLIN_FILE" || true
-
-      # ============================================================
-      # 12. FIX FLUTTER SOURCE
-      # ============================================================
-      - name: Auto Fix Dart Source
-        working-directory: ${{ env.PROJECT_DIR }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "Running Dart automatic fixes..."
-
-          dart fix --dry-run || true
-
-          dart fix --apply || true
-
-      # ============================================================
-      # 13. PUB GET
-      # ============================================================
       - name: Flutter Pub Get
         working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
@@ -375,21 +180,16 @@ PY
           flutter clean
           flutter pub get
 
-      # ============================================================
-      # 14. FORMAT
-      # ============================================================
-      - name: Dart Format
+      - name: Automatic Dart Fixes
         working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
         run: |
           set -euo pipefail
 
-          dart format lib test 2>/dev/null || \
+          dart fix --apply || true
+
           dart format lib
 
-      # ============================================================
-      # 15. FLUTTER ANALYZE
-      # ============================================================
       - name: Flutter Analyze
         working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
@@ -397,16 +197,13 @@ PY
           set -euo pipefail
 
           echo "======================================"
-          echo "RUNNING FLUTTER ANALYZE"
+          echo "FLUTTER ANALYZE"
           echo "======================================"
 
           flutter analyze \
             --no-fatal-infos \
             --no-fatal-warnings
 
-      # ============================================================
-      # 16. BUILD USER
-      # ============================================================
       - name: Build User APK
         working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
@@ -422,9 +219,6 @@ PY
             --flavor user \
             -t lib/main_user.dart
 
-      # ============================================================
-      # 17. BUILD ADMIN
-      # ============================================================
       - name: Build Admin APK
         working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
@@ -440,10 +234,7 @@ PY
             --flavor admin \
             -t lib/main_admin.dart
 
-      # ============================================================
-      # 18. PREPARE APK OUTPUT
-      # ============================================================
-      - name: Prepare APK Files
+      - name: Collect APKs
         working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
         run: |
@@ -451,25 +242,25 @@ PY
 
           mkdir -p release_apks
 
-          USER_APK=$(find build/app/outputs/flutter-apk \
+          USER_APK="$(find build/app/outputs/flutter-apk \
             -type f \
-            -name "*user*release*.apk" \
-            | head -n 1)
+            -name '*user*release*.apk' \
+            | head -n 1)"
 
-          ADMIN_APK=$(find build/app/outputs/flutter-apk \
+          ADMIN_APK="$(find build/app/outputs/flutter-apk \
             -type f \
-            -name "*admin*release*.apk" \
-            | head -n 1)
+            -name '*admin*release*.apk' \
+            | head -n 1)"
 
           if [ -z "$USER_APK" ]; then
             echo "::error::User APK not found."
-            find build/app/outputs -type f -name "*.apk"
+            find build/app/outputs -type f -name '*.apk'
             exit 1
           fi
 
           if [ -z "$ADMIN_APK" ]; then
             echo "::error::Admin APK not found."
-            find build/app/outputs -type f -name "*.apk"
+            find build/app/outputs -type f -name '*.apk'
             exit 1
           fi
 
@@ -479,12 +270,12 @@ PY
           cp "$ADMIN_APK" \
             release_apks/SADEE-DIMA-ADMIN.apk
 
-          echo "===== APK OUTPUT ====="
+          echo "======================================"
+          echo "APK FILES"
+          echo "======================================"
+
           ls -lh release_apks
 
-      # ============================================================
-      # 19. UPLOAD ARTIFACTS
-      # ============================================================
       - name: Upload APKs
         uses: actions/upload-artifact@v4
         with:
