@@ -14,7 +14,7 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Extract Project ZIP
+      - name: Find and Extract ZIP
         shell: bash
         run: |
           set -e
@@ -26,25 +26,25 @@ jobs:
             exit 1
           fi
 
-          echo "Found: $ZIP_FILE"
+          echo "ZIP: $ZIP_FILE"
 
-          mkdir -p project
-          unzip -o "$ZIP_FILE" -d project
+          mkdir -p source
+          unzip -o "$ZIP_FILE" -d source
 
-      - name: Find Flutter Project
+      - name: Find Flutter Source
         shell: bash
         run: |
           set -e
 
-          PROJECT_DIR=$(find project -name pubspec.yaml -type f -print -quit | xargs dirname)
+          SOURCE_DIR=$(find source -name pubspec.yaml -type f -print -quit | xargs dirname)
 
-          if [ -z "$PROJECT_DIR" ]; then
+          if [ -z "$SOURCE_DIR" ]; then
             echo "ERROR: pubspec.yaml not found"
             exit 1
           fi
 
-          echo "Flutter project: $PROJECT_DIR"
-          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "Source: $SOURCE_DIR"
+          echo "SOURCE_DIR=$SOURCE_DIR" >> "$GITHUB_ENV"
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -59,20 +59,46 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Flutter Doctor
-        run: flutter doctor -v
+      - name: Create Fresh Flutter Project
+        run: |
+          flutter create \
+            --project-name sadee_x_dima \
+            --platforms android \
+            fresh_app
+
+      - name: Copy App Files
+        shell: bash
+        run: |
+          set -e
+
+          rm -rf fresh_app/lib
+          mkdir -p fresh_app/lib
+
+          cp -R "$SOURCE_DIR/lib/." fresh_app/lib/
+
+          if [ -d "$SOURCE_DIR/assets" ]; then
+            cp -R "$SOURCE_DIR/assets" fresh_app/
+          fi
+
+          cp "$SOURCE_DIR/pubspec.yaml" fresh_app/pubspec.yaml
+
+      - name: Fix system_info2 Version
+        shell: bash
+        working-directory: fresh_app
+        run: |
+          sed -i 's/system_info2: *\^1\.0\.1/system_info2: ^4.1.0/g' pubspec.yaml
 
       - name: Get Dependencies
-        working-directory: ${{ env.PROJECT_DIR }}
+        working-directory: fresh_app
         run: flutter pub get
 
-      - name: Build User APK
-        working-directory: ${{ env.PROJECT_DIR }}
+      - name: Build APK
+        working-directory: fresh_app
         run: flutter build apk --release -t lib/main_user.dart
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: sadee-x-dima-optimizer-apk
-          path: ${{ env.PROJECT_DIR }}/build/app/outputs/flutter-apk/app-release.apk
+          path: fresh_app/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
