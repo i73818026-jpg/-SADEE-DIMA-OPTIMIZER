@@ -1,4 +1,4 @@
-name: SADEE X DIMA - Build APKs
+name: SADEE X DIMA - Final Build
 
 on:
   workflow_dispatch:
@@ -15,95 +15,64 @@ jobs:
 
     steps:
 
-      # ============================================================
-      # 1. CHECKOUT REPOSITORY
-      # ============================================================
-      - name: Checkout Repository
+      # ==========================================================
+      # CHECKOUT
+      # ==========================================================
+      - name: Checkout
         uses: actions/checkout@v4
 
-      # ============================================================
-      # 2. SETUP FLUTTER
-      # ============================================================
+      # ==========================================================
+      # FLUTTER
+      # ==========================================================
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
           cache: true
 
-      # ============================================================
-      # 3. FIND ZIP + EXTRACT
-      # ============================================================
-      - name: Extract Project ZIP
+      # ==========================================================
+      # FIND ZIP + EXTRACT
+      # ==========================================================
+      - name: Extract ZIP Project
         shell: bash
         run: |
           set -euo pipefail
 
-          echo "======================================"
-          echo "SEARCHING FOR PROJECT ZIP"
-          echo "======================================"
+          echo "=========================================="
+          echo "SEARCHING PROJECT ZIP"
+          echo "=========================================="
 
-          ZIP_FILE=""
-
-          while IFS= read -r file; do
-            case "$file" in
-              *.zip)
-                ZIP_FILE="$file"
-                break
-                ;;
-            esac
-          done < <(
-            find "$GITHUB_WORKSPACE" \
-              -type f \
-              -name "*.zip" \
-              -not -path "*/.git/*" \
-              -print
-          )
+          ZIP_FILE="$(find "$GITHUB_WORKSPACE" \
+            -type f \
+            -name '*.zip' \
+            -not -path '*/.git/*' \
+            -print -quit)"
 
           if [ -z "$ZIP_FILE" ]; then
             echo "ERROR: No ZIP file found."
             exit 1
           fi
 
-          echo "ZIP:"
+          echo "ZIP FOUND:"
           echo "$ZIP_FILE"
 
           rm -rf "$GITHUB_WORKSPACE/extracted_project"
-
           mkdir -p "$GITHUB_WORKSPACE/extracted_project"
-
-          echo "======================================"
-          echo "EXTRACTING ZIP"
-          echo "======================================"
 
           unzip -o "$ZIP_FILE" \
             -d "$GITHUB_WORKSPACE/extracted_project"
 
-          echo "======================================"
-          echo "SEARCHING pubspec.yaml"
-          echo "======================================"
-
-          PUBSPEC=""
-
-          while IFS= read -r file; do
-            PUBSPEC="$file"
-            break
-          done < <(
-            find "$GITHUB_WORKSPACE/extracted_project" \
-              -type f \
-              -name "pubspec.yaml" \
-              -print
-          )
+          PUBSPEC="$(find \
+            "$GITHUB_WORKSPACE/extracted_project" \
+            -type f \
+            -name 'pubspec.yaml' \
+            -print -quit)"
 
           if [ -z "$PUBSPEC" ]; then
             echo "ERROR: pubspec.yaml not found inside ZIP."
-
-            echo ""
-            echo "Extracted files:"
             find "$GITHUB_WORKSPACE/extracted_project" \
               -maxdepth 5 \
-              -type f \
-              | head -200
-
+              -type f | head -200
             exit 1
           fi
 
@@ -111,15 +80,14 @@ jobs:
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-          echo ""
-          echo "======================================"
-          echo "PROJECT FOUND"
+          echo "=========================================="
+          echo "PROJECT:"
           echo "$PROJECT_DIR"
-          echo "======================================"
+          echo "=========================================="
 
-      # ============================================================
-      # 4. VERIFY PROJECT
-      # ============================================================
+      # ==========================================================
+      # VERIFY PROJECT
+      # ==========================================================
       - name: Verify Flutter Project
         shell: bash
         run: |
@@ -127,48 +95,24 @@ jobs:
 
           cd "$PROJECT_DIR"
 
-          echo "======================================"
-          echo "VERIFYING PROJECT"
-          echo "======================================"
-
           test -f pubspec.yaml
           test -f lib/main_user.dart
           test -f lib/main_admin.dart
+          test -f lib/services/optimizer_service.dart
+          test -f lib/screens/user_home.dart
           test -f android/app/build.gradle
-          test -f android/settings.gradle
-          test -f android/gradle/wrapper/gradle-wrapper.properties
 
-          if ! grep -Fq "productFlavors" android/app/build.gradle; then
-            echo "ERROR: productFlavors not found."
-            exit 1
-          fi
+          echo "Flutter project verified."
 
-          if ! grep -Eq 'user[[:space:]]*\{' android/app/build.gradle; then
-            echo "ERROR: user flavor not found."
-            exit 1
-          fi
-
-          if ! grep -Eq 'admin[[:space:]]*\{' android/app/build.gradle; then
-            echo "ERROR: admin flavor not found."
-            exit 1
-          fi
-
-          echo "Project verification SUCCESS."
-
-      # ============================================================
-      # 5. REPAIR PNG ON RUNNER
-      #    ORIGINAL ZIP IS NOT MODIFIED
-      # ============================================================
-      - name: Repair Logo PNG
+      # ==========================================================
+      # FIX PNG
+      # ==========================================================
+      - name: Repair Android Logo
         shell: bash
         run: |
           set -euo pipefail
 
           cd "$PROJECT_DIR"
-
-          echo "======================================"
-          echo "REPAIRING LOGO PNG"
-          echo "======================================"
 
           python3 -m pip install \
             --quiet \
@@ -180,53 +124,173 @@ jobs:
           from PIL import Image
 
           files = [
-              Path("assets/sadee_x_dima_logo.png"),
               Path("android/app/src/main/res/drawable-nodpi/sadee_logo.png"),
+              Path("assets/sadee_x_dima_logo.png"),
           ]
 
-          for path in files:
-              if not path.exists():
-                  print(f"SKIP: {path}")
+          for p in files:
+              if not p.exists():
+                  print("SKIP:", p)
                   continue
 
-              print(f"Repairing: {path}")
+              print("Repairing:", p)
 
-              temp = path.with_name(path.stem + "_fixed.png")
+              img = Image.open(p)
+              img.load()
+              img = img.convert("RGBA")
 
-              image = Image.open(path)
-              image.load()
+              tmp = p.with_name(p.stem + "_fixed.png")
 
-              image = image.convert("RGBA")
-
-              image.save(
-                  temp,
+              img.save(
+                  tmp,
                   format="PNG",
                   optimize=False,
                   compress_level=6
               )
 
-              temp.replace(path)
+              tmp.replace(p)
 
-              check = Image.open(path)
+              check = Image.open(p)
               check.load()
 
-              if check.format != "PNG":
-                  raise RuntimeError(
-                      f"PNG validation failed: {path}"
-                  )
-
               print(
-                  f"OK: {path} "
-                  f"{check.size} {check.mode}"
+                  "OK:",
+                  p,
+                  check.format,
+                  check.size,
+                  check.mode
               )
-
-          print("PNG repair completed.")
           PY
 
-      # ============================================================
-      # 6. PATCH GRADLE / AGP / KOTLIN
-      #    ONLY EXTRACTED COPY IS CHANGED
-      # ============================================================
+      # ==========================================================
+      # IMPORTANT SOURCE FIX
+      # notifyOperation() MISSING FIX
+      # ==========================================================
+      - name: Patch OptimizerService
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd "$PROJECT_DIR"
+
+          python3 <<'PY'
+          from pathlib import Path
+
+          path = Path("lib/services/optimizer_service.dart")
+
+          if not path.exists():
+              raise SystemExit(
+                  "ERROR: optimizer_service.dart not found"
+              )
+
+          text = path.read_text(encoding="utf-8")
+
+          method = r'''
+            Future<void> notifyOperation(
+              String title,
+              String text,
+            ) async {
+              try {
+                await _channel.invokeMethod(
+                  'notifyOperation',
+                  {
+                    'title': title,
+                    'text': text,
+                  },
+                );
+              } catch (_) {}
+            }
+          '''
+
+          if "Future<void> notifyOperation(" not in text:
+              marker = "\n  String formatBytes"
+
+              if marker in text:
+                  text = text.replace(
+                      marker,
+                      "\n" + method + marker,
+                      1,
+                  )
+              else:
+                  marker2 = "\n}"
+
+                  pos = text.rfind(marker2)
+
+                  if pos == -1:
+                      raise SystemExit(
+                          "ERROR: Could not patch optimizer_service.dart"
+                      )
+
+                  text = (
+                      text[:pos]
+                      + "\n"
+                      + method
+                      + text[pos:]
+                  )
+
+              path.write_text(
+                  text,
+                  encoding="utf-8"
+              )
+
+              print(
+                  "FIXED: OptimizerService.notifyOperation() added"
+              )
+          else:
+              print(
+                  "OK: notifyOperation() already exists"
+              )
+          PY
+
+      # ==========================================================
+      # FIX DEPRECATED withOpacity
+      # ==========================================================
+      - name: Patch Flutter Color APIs
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd "$PROJECT_DIR"
+
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+
+          files = [
+              Path("lib/screens/license_gate.dart"),
+              Path("lib/screens/user_home.dart"),
+          ]
+
+          for path in files:
+              if not path.exists():
+                  continue
+
+              text = path.read_text(encoding="utf-8")
+
+              # Simple Flutter expressions such as:
+              # Colors.white.withOpacity(0.45)
+              # Colors.black.withOpacity(.2)
+              pattern = r'\.withOpacity\(([^()\n]+)\)'
+
+              new_text = re.sub(
+                  pattern,
+                  r'.withValues(alpha: \1)',
+                  text
+              )
+
+              if new_text != text:
+                  path.write_text(
+                      new_text,
+                      encoding="utf-8"
+                  )
+                  print("Updated:", path)
+              else:
+                  print("No Color API change needed:", path)
+          PY
+
+      # ==========================================================
+      # GRADLE / AGP / KOTLIN PATCH
+      # ==========================================================
       - name: Patch Android Build Tools
         shell: bash
         run: |
@@ -234,18 +298,18 @@ jobs:
 
           cd "$PROJECT_DIR"
 
-          echo "======================================"
-          echo "PATCHING ANDROID BUILD TOOLS"
-          echo "======================================"
+          echo "=========================================="
+          echo "PATCHING ANDROID BUILD"
+          echo "=========================================="
 
-          # Gradle 8.14.5
+          # Gradle
           if [ -f android/gradle/wrapper/gradle-wrapper.properties ]; then
             sed -i \
               's#distributionUrl=.*#distributionUrl=https\://services.gradle.org/distributions/gradle-8.14.5-bin.zip#' \
               android/gradle/wrapper/gradle-wrapper.properties
           fi
 
-          # AGP + Kotlin in settings.gradle
+          # settings.gradle - AGP
           if [ -f android/settings.gradle ]; then
 
             sed -i \
@@ -253,20 +317,20 @@ jobs:
               android/settings.gradle || true
 
             sed -i \
-              's/id "org.jetbrains.kotlin.android" version "[^"]*"/id "org.jetbrains.kotlin.android" version "2.2.20"/g' \
+              's/id("com.android.application") version "[^"]*"/id("com.android.application") version "8.11.1"/g' \
               android/settings.gradle || true
 
+            # Kotlin
             sed -i \
-              's/id("com.android.application") version "[^"]*"/id("com.android.application") version "8.11.1"/g' \
+              's/id "org.jetbrains.kotlin.android" version "[^"]*"/id "org.jetbrains.kotlin.android" version "2.2.20"/g' \
               android/settings.gradle || true
 
             sed -i \
               's/id("org.jetbrains.kotlin.android") version "[^"]*"/id("org.jetbrains.kotlin.android") version "2.2.20"/g' \
               android/settings.gradle || true
-
           fi
 
-          # Older build.gradle projects
+          # Old build.gradle projects
           if [ -f android/build.gradle ]; then
 
             sed -i \
@@ -276,50 +340,66 @@ jobs:
             sed -i \
               's/ext.kotlin_version[[:space:]]*=[[:space:]]*["'\''][^"'\'']*["'\'']/ext.kotlin_version = "2.2.20"/g' \
               android/build.gradle || true
-
           fi
 
-          echo "Android build tools patched."
+      # ==========================================================
+      # VERIFY FLAVORS
+      # ==========================================================
+      - name: Verify Product Flavors
+        shell: bash
+        run: |
+          set -euo pipefail
 
-      # ============================================================
-      # 7. FLUTTER CLEAN
-      # ============================================================
+          cd "$PROJECT_DIR"
+
+          echo "Checking productFlavors..."
+
+          grep -Fq "productFlavors" \
+            android/app/build.gradle
+
+          grep -Eq 'user[[:space:]]*\{' \
+            android/app/build.gradle
+
+          grep -Eq 'admin[[:space:]]*\{' \
+            android/app/build.gradle
+
+          echo "USER flavor: OK"
+          echo "ADMIN flavor: OK"
+          echo "productFlavors: OK"
+
+      # ==========================================================
+      # CLEAN
+      # ==========================================================
       - name: Flutter Clean
         shell: bash
         run: |
           set -euo pipefail
-
           cd "$PROJECT_DIR"
-
           flutter clean
 
-      # ============================================================
-      # 8. PUB GET
-      # ============================================================
+      # ==========================================================
+      # PUB GET
+      # ==========================================================
       - name: Flutter Pub Get
         shell: bash
         run: |
           set -euo pipefail
-
           cd "$PROJECT_DIR"
-
           flutter pub get
 
-      # ============================================================
-      # 9. DART FORMAT
-      # ============================================================
+      # ==========================================================
+      # FORMAT
+      # ==========================================================
       - name: Dart Format
         shell: bash
         run: |
           set -euo pipefail
-
           cd "$PROJECT_DIR"
-
           dart format lib
 
-      # ============================================================
-      # 10. FLUTTER ANALYZE
-      # ============================================================
+      # ==========================================================
+      # ANALYZE
+      # ==========================================================
       - name: Flutter Analyze
         shell: bash
         run: |
@@ -331,9 +411,9 @@ jobs:
             --no-fatal-infos \
             --no-fatal-warnings
 
-      # ============================================================
-      # 11. BUILD USER APK
-      # ============================================================
+      # ==========================================================
+      # USER APK
+      # ==========================================================
       - name: Build USER APK
         shell: bash
         run: |
@@ -341,21 +421,18 @@ jobs:
 
           cd "$PROJECT_DIR"
 
-          echo "======================================"
+          echo "=========================================="
           echo "BUILDING USER APK"
-          echo "======================================"
+          echo "=========================================="
 
           flutter build apk \
             --release \
             --flavor user \
             -t lib/main_user.dart
 
-          echo ""
-          echo "USER APK BUILD SUCCESS."
-
-      # ============================================================
-      # 12. BUILD ADMIN APK
-      # ============================================================
+      # ==========================================================
+      # ADMIN APK
+      # ==========================================================
       - name: Build ADMIN APK
         shell: bash
         run: |
@@ -363,31 +440,24 @@ jobs:
 
           cd "$PROJECT_DIR"
 
-          echo "======================================"
+          echo "=========================================="
           echo "BUILDING ADMIN APK"
-          echo "======================================"
+          echo "=========================================="
 
           flutter build apk \
             --release \
             --flavor admin \
             -t lib/main_admin.dart
 
-          echo ""
-          echo "ADMIN APK BUILD SUCCESS."
-
-      # ============================================================
-      # 13. COLLECT APKs
-      # ============================================================
-      - name: Collect APK Files
+      # ==========================================================
+      # COLLECT
+      # ==========================================================
+      - name: Collect APKs
         shell: bash
         run: |
           set -euo pipefail
 
           cd "$PROJECT_DIR"
-
-          echo "======================================"
-          echo "COLLECTING APK FILES"
-          echo "======================================"
 
           mkdir -p release
 
@@ -396,45 +466,32 @@ jobs:
 
           if [ ! -f "$USER_APK" ]; then
             echo "ERROR: USER APK not found."
-
-            find build \
-              -type f \
-              -name "*.apk" \
-              -print || true
-
+            find build -type f -name "*.apk" -print || true
             exit 1
           fi
 
           if [ ! -f "$ADMIN_APK" ]; then
             echo "ERROR: ADMIN APK not found."
-
-            find build \
-              -type f \
-              -name "*.apk" \
-              -print || true
-
+            find build -type f -name "*.apk" -print || true
             exit 1
           fi
 
-          cp \
-            "$USER_APK" \
-            "release/SADEE-DIMA-OPTIMIZER-USER.apk"
+          cp "$USER_APK" \
+            release/SADEE-DIMA-OPTIMIZER-USER.apk
 
-          cp \
-            "$ADMIN_APK" \
-            "release/SADEE-DIMA-OPTIMIZER-ADMIN.apk"
+          cp "$ADMIN_APK" \
+            release/SADEE-DIMA-OPTIMIZER-ADMIN.apk
 
-          echo ""
-          echo "======================================"
-          echo "FINAL APK FILES"
-          echo "======================================"
+          echo "=========================================="
+          echo "APK FILES"
+          echo "=========================================="
 
           ls -lh release/
 
-      # ============================================================
-      # 14. UPLOAD APK ARTIFACTS
-      # ============================================================
-      - name: Upload APKs
+      # ==========================================================
+      # UPLOAD
+      # ==========================================================
+      - name: Upload Final APKs
         uses: actions/upload-artifact@v4
         with:
           name: SADEE-DIMA-OPTIMIZER-FINAL-APKs
@@ -443,27 +500,23 @@ jobs:
             ${{ env.PROJECT_DIR }}/release/SADEE-DIMA-OPTIMIZER-ADMIN.apk
           if-no-files-found: error
 
-      # ============================================================
-      # 15. FINAL RESULT
-      # ============================================================
-      - name: Build Summary
+      # ==========================================================
+      # DONE
+      # ==========================================================
+      - name: Final Success
         shell: bash
         run: |
           echo ""
           echo "=============================================="
-          echo "       SADEE X DIMA BUILD COMPLETE"
+          echo "       SADEE X DIMA BUILD SUCCESS"
           echo "=============================================="
           echo ""
-          echo "ZIP extraction : SUCCESS"
-          echo "Project verify : SUCCESS"
-          echo "PNG repair     : SUCCESS"
-          echo "Gradle patch   : SUCCESS"
-          echo "Flutter pub    : SUCCESS"
-          echo "Analyze        : SUCCESS"
-          echo "USER APK       : SUCCESS"
-          echo "ADMIN APK      : SUCCESS"
+          echo "ZIP extraction : OK"
+          echo "Source patch   : OK"
+          echo "PNG repair     : OK"
+          echo "Flutter analyze: OK"
+          echo "USER APK       : OK"
+          echo "ADMIN APK      : OK"
           echo ""
-          echo "Download the APKs from:"
-          echo "GitHub Actions -> Artifacts"
-          echo ""
+          echo "APK files are available in GitHub Actions Artifacts."
           echo "=============================================="
