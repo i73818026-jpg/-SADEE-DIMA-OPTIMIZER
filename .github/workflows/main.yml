@@ -1,17 +1,19 @@
-name: SADEE X DIMA - REAL GAMING BUILD
+name: Build Sadee X Dima Apps
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
+    name: Build User + Admin APK
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Setup Flutter
@@ -20,194 +22,73 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Locate source ZIP
+      - name: Locate Flutter project
         shell: bash
         run: |
-          set -e
-          ZIP="$(find . -maxdepth 4 -type f -iname '*.zip' -print -quit || true)"
-          if [ -z "$ZIP" ]; then
-            echo "Source ZIP not found"
-            exit 1
+          set -euo pipefail
+          if [ -f "$GITHUB_WORKSPACE/pubspec.yaml" ]; then
+            PROJECT_DIR="$GITHUB_WORKSPACE"
+          else
+            FOUND="$(find "$GITHUB_WORKSPACE" -type f -name pubspec.yaml -not -path '*/.git/*' -print | head -n 1)"
+            [ -n "$FOUND" ] || { echo 'ERROR: pubspec.yaml not found'; exit 1; }
+            PROJECT_DIR="$(dirname "$FOUND")"
           fi
-          echo "SOURCE_ZIP=$ZIP" >> "$GITHUB_ENV"
-
-      - name: Extract source
-        shell: bash
-        run: |
-          set -e
-          rm -rf extracted_project
-          mkdir -p extracted_project
-          unzip -q "$SOURCE_ZIP" -d extracted_project
-
-          PUB="$(find extracted_project -maxdepth 7 -name pubspec.yaml -print -quit)"
-          if [ -z "$PUB" ]; then
-            echo "pubspec.yaml not found"
-            exit 1
-          fi
-
-          PROJECT_DIR="$(dirname "$PUB")"
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "Using $PROJECT_DIR"
+          echo "Flutter project: $PROJECT_DIR"
 
-      - name: Stabilize Android versions
+      - name: Verify source
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
           cd "$PROJECT_DIR"
+          for f in pubspec.yaml lib/main_user.dart lib/main_admin.dart lib/config.dart lib/services/key_service.dart lib/services/optimizer_service.dart lib/screens/license_gate.dart lib/screens/user_home.dart lib/screens/admin_home.dart android/app/build.gradle; do
+            test -f "$f" || { echo "MISSING: $f"; exit 1; }
+          done
 
-          if [ -f android/gradle/wrapper/gradle-wrapper.properties ]; then
-            sed -i -E 's#gradle-[0-9.]+-(all|bin).zip#gradle-8.14.5-\1.zip#g' android/gradle/wrapper/gradle-wrapper.properties
-          fi
-
-          if [ -f android/settings.gradle ]; then
-            sed -i -E 's/com\.android\.application:[0-9.]+/com.android.application:8.11.1/g; s/org\.jetbrains\.kotlin\.android:[0-9.]+/org.jetbrains.kotlin.android:2.2.20/g' android/settings.gradle
-          fi
-
-          if [ -f android/settings.gradle.kts ]; then
-            sed -i -E 's/com\.android\.application:[0-9.]+/com.android.application:8.11.1/g; s/org\.jetbrains\.kotlin\.android:[0-9.]+/org.jetbrains.kotlin.android:2.2.20/g' android/settings.gradle.kts
-          fi
-
-      - name: Apply workflow-safe source patches
+      - name: Stabilize Android toolchain
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
           cd "$PROJECT_DIR"
+          sed -i 's#distributionUrl=.*#distributionUrl=https\://services.gradle.org/distributions/gradle-8.14.5-bin.zip#' android/gradle/wrapper/gradle-wrapper.properties
+          sed -i 's/id "com.android.application" version "[^"]*"/id "com.android.application" version "8.11.1"/' android/settings.gradle || true
+          sed -i 's/id "org.jetbrains.kotlin.android" version "[^"]*"/id "org.jetbrains.kotlin.android" version "2.2.20"/' android/settings.gradle || true
 
-          python3 <<'PY'
-          from pathlib import Path
-
-          service = Path("lib/services/optimizer_service.dart")
-          if service.exists():
-              text = service.read_text(encoding="utf-8")
-
-              if "Future<void> notifyOperation(" not in text:
-                  method = """
-            Future<void> notifyOperation(
-              String title,
-              String message,
-            ) async {
-              try {
-                await _channel.invokeMethod(
-                  'notifyUser',
-                  <String, dynamic>{
-                    'title': title,
-                    'text': message,
-                  },
-                );
-              } catch (_) {}
-            }
-
-          """
-                  pos = text.rfind("\n}")
-                  if pos >= 0:
-                      text = text[:pos] + "\n" + method + text[pos:]
-                      service.write_text(text, encoding="utf-8")
-
-          home = Path("lib/screens/user_home.dart")
-          if home.exists():
-              text = home.read_text(encoding="utf-8")
-              text = text.replace(
-                  "Timer.periodic(const Duration(seconds:3)",
-                  "Timer.periodic(const Duration(seconds:1)"
-              )
-              text = text.replace(
-                  "['downloads','large','old','duplicates','junk','empty']",
-                  """[
-                    'downloads',
-                    'large',
-                    'old',
-                    'duplicates',
-                    'junk',
-                    'empty',
-                    'thumbnails',
-                    'apk',
-                    'temp'
-                  ]"""
-              )
-              home.write_text(text, encoding="utf-8")
-
-          manifest = Path("android/app/src/main/AndroidManifest.xml")
-          if manifest.exists():
-              text = manifest.read_text(encoding="utf-8")
-              permission = 'android.permission.POST_NOTIFICATIONS'
-              if permission not in text:
-                  marker = '    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>\n'
-                  end = text.find(">", text.find("<manifest"))
-                  if end >= 0:
-                      text = text[:end + 1] + "\n" + marker + text[end + 1:]
-                      manifest.write_text(text, encoding="utf-8")
-
-          print("Source patches completed.")
-          PY
-
-      - name: Fix Android Uri import
-        shell: bash
-        run: |
-          set -e
-          cd "$PROJECT_DIR"
-          MAIN="$(find android/app/src/main -name MainActivity.kt -print -quit || true)"
-
-          if [ -n "$MAIN" ]; then
-            if (grep -q 'Uri\.' "$MAIN" || grep -q 'Uri(' "$MAIN") && ! grep -q 'import android.net.Uri' "$MAIN"; then
-              sed -i '1i import android.net.Uri' "$MAIN"
-            fi
-          fi
-
-      - name: Flutter clean and pub get
-        shell: bash
-        run: |
-          set -e
-          cd "$PROJECT_DIR"
-          flutter clean
-          flutter pub get
+      - name: Flutter pub get
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: flutter pub get
 
       - name: Format
-        shell: bash
-        run: |
-          cd "$PROJECT_DIR"
-          dart format lib
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: dart format lib
 
       - name: Analyze
-        shell: bash
-        run: |
-          set -e
-          cd "$PROJECT_DIR"
-          flutter analyze --no-fatal-infos --no-fatal-warnings
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
 
       - name: Build User APK
-        shell: bash
-        run: |
-          set -e
-          cd "$PROJECT_DIR"
-
-          if grep -q "flavorDimensions" android/app/build.gradle 2>/dev/null; then
-            flutter build apk --release --flavor user -t lib/main_user.dart
-          else
-            flutter build apk --release -t lib/main_user.dart
-          fi
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: flutter build apk --release --flavor user -t lib/main_user.dart
 
       - name: Build Admin APK
-        shell: bash
-        run: |
-          set -e
-          cd "$PROJECT_DIR"
-
-          if grep -q "flavorDimensions" android/app/build.gradle 2>/dev/null; then
-            flutter build apk --release --flavor admin -t lib/main_admin.dart
-          else
-            flutter build apk --release -t lib/main_admin.dart
-          fi
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: flutter build apk --release --flavor admin -t lib/main_admin.dart
 
       - name: Collect APKs
+        working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
         run: |
-          set -e
-          mkdir -p release_apks
-          find "$PROJECT_DIR/build/app/outputs/flutter-apk" -type f -name "*.apk" -exec cp {} release_apks/ \;
-          ls -lh release_apks
+          set -euo pipefail
+          mkdir -p release
+          cp build/app/outputs/flutter-apk/app-user-release.apk release/SADEE-DIMA-OPTIMIZER-USER.apk
+          cp build/app/outputs/flutter-apk/app-admin-release.apk release/SADEE-DIMA-OPTIMIZER-ADMIN.apk
+          ls -lh release
 
       - name: Upload APKs
         uses: actions/upload-artifact@v4
         with:
-          name: SADEE-X-DIMA-APKs
-          path: release_apks/*.apk
+          name: SADEE-DIMA-OPTIMIZER-V6-FINAL
+          path: |
+            ${{ env.PROJECT_DIR }}/release/SADEE-DIMA-OPTIMIZER-USER.apk
+            ${{ env.PROJECT_DIR }}/release/SADEE-DIMA-OPTIMIZER-ADMIN.apk
+          if-no-files-found: error
