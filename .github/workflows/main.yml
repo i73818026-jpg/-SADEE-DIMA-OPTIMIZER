@@ -15,83 +15,62 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Find ZIP
-        shell: bash
         run: |
           set -e
 
-          echo "=== Repository files ==="
-          find . -maxdepth 3 -type f | sort
+          echo "Repository files:"
+          find . -maxdepth 2 -type f ! -path "./.git/*" | sort
 
-          ZIP_FILE=$(find . -type f -iname "*.zip" \
-            ! -path "./.git/*" \
-            | head -n 1)
+          ZIP_FILE=$(find . -type f -iname "*.zip" ! -path "./.git/*" | head -n 1)
 
           if [ -z "$ZIP_FILE" ]; then
-            echo "❌ ZIP file not found!"
+            echo "ERROR: ZIP file not found."
+            echo "Upload sadee_x_dima_optimizer_v3_user_admin.zip to repository root."
             exit 1
           fi
 
-          echo "✅ ZIP found: $ZIP_FILE"
+          echo "ZIP FOUND: $ZIP_FILE"
           echo "ZIP_FILE=$ZIP_FILE" >> "$GITHUB_ENV"
 
       - name: Extract ZIP
-        shell: bash
         run: |
           set -e
 
           rm -rf extracted
-          mkdir -p extracted
-
-          echo "Extracting $ZIP_FILE ..."
+          mkdir extracted
 
           unzip -o "$ZIP_FILE" -d extracted
 
-          echo "=== Extracted files ==="
-          find extracted -maxdepth 5 -type f | sort
+          echo "Extracted:"
+          find extracted -maxdepth 4 -type f | sort
 
-      - name: Find User Project
-        shell: bash
+      - name: Find Projects
         run: |
           set -e
 
-          USER_PUBSPEC=$(find extracted -type f -path "*/user/pubspec.yaml" | head -n 1)
+          USER_DIR=$(find extracted -type f -path "*/user/pubspec.yaml" \
+            -exec dirname {} \; | head -n 1)
 
-          if [ -z "$USER_PUBSPEC" ]; then
-            echo "❌ user/pubspec.yaml not found!"
+          ADMIN_DIR=$(find extracted -type f -path "*/admin/pubspec.yaml" \
+            -exec dirname {} \; | head -n 1)
 
-            echo "Available pubspec files:"
-            find extracted -type f -name "pubspec.yaml" | sort
-
+          if [ -z "$USER_DIR" ]; then
+            echo "ERROR: user project not found"
             exit 1
           fi
 
-          USER_DIR=$(dirname "$USER_PUBSPEC")
+          if [ -z "$ADMIN_DIR" ]; then
+            echo "ERROR: admin project not found"
+            exit 1
+          fi
 
-          echo "✅ USER_DIR=$USER_DIR"
           echo "USER_DIR=$USER_DIR" >> "$GITHUB_ENV"
-
-      - name: Find Admin Project
-        shell: bash
-        run: |
-          set -e
-
-          ADMIN_PUBSPEC=$(find extracted -type f -path "*/admin/pubspec.yaml" | head -n 1)
-
-          if [ -z "$ADMIN_PUBSPEC" ]; then
-            echo "❌ admin/pubspec.yaml not found!"
-
-            echo "Available pubspec files:"
-            find extracted -type f -name "pubspec.yaml" | sort
-
-            exit 1
-          fi
-
-          ADMIN_DIR=$(dirname "$ADMIN_PUBSPEC")
-
-          echo "✅ ADMIN_DIR=$ADMIN_DIR"
           echo "ADMIN_DIR=$ADMIN_DIR" >> "$GITHUB_ENV"
 
-      - name: Setup Java 17
+          echo "User: $USER_DIR"
+          echo "Admin: $ADMIN_DIR"
+
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -104,43 +83,33 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Create User Flutter Project
+      - name: Create User Project
         run: |
           flutter create \
             --org com.sadee.xdima \
             --project-name sadee_optimizer_user \
             user_build
 
-      - name: Copy User Source
-        run: |
           rm -rf user_build/lib
-
           cp -r "$USER_DIR/lib" user_build/lib
           cp "$USER_DIR/pubspec.yaml" user_build/pubspec.yaml
 
-          echo "✅ User source copied"
-
-      - name: Create Admin Flutter Project
+      - name: Create Admin Project
         run: |
           flutter create \
             --org com.sadee.xdima \
             --project-name sadee_optimizer_admin \
             admin_build
 
-      - name: Copy Admin Source
-        run: |
           rm -rf admin_build/lib
-
           cp -r "$ADMIN_DIR/lib" admin_build/lib
           cp "$ADMIN_DIR/pubspec.yaml" admin_build/pubspec.yaml
 
-          echo "✅ Admin source copied"
-
-      - name: Get User Dependencies
+      - name: User Dependencies
         working-directory: user_build
         run: flutter pub get
 
-      - name: Get Admin Dependencies
+      - name: Admin Dependencies
         working-directory: admin_build
         run: flutter pub get
 
@@ -165,11 +134,9 @@ jobs:
         with:
           name: sadee-x-dima-user-apk
           path: user_build/build/app/outputs/flutter-apk/app-release.apk
-          if-no-files-found: error
 
       - name: Upload Admin APK
         uses: actions/upload-artifact@v4
         with:
           name: sadee-x-dima-admin-apk
           path: admin_build/build/app/outputs/flutter-apk/app-release.apk
-          if-no-files-found: error
