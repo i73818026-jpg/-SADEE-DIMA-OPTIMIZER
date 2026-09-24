@@ -1,11 +1,10 @@
-name: SADEE X DIMA - ZIP BUILD
+name: Build SADEE X DIMA Optimizer
 
 on:
   workflow_dispatch:
   push:
-    paths:
-      - "**.zip"
-      - ".github/workflows/main.yml"
+    branches:
+      - main
 
 jobs:
   build:
@@ -18,226 +17,24 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: "3.35.7"
+          flutter-version: "3.35.0"
           channel: stable
           cache: true
 
-      - name: Find and extract ZIP
-        shell: bash
-        run: |
-          set -euo pipefail
+      - name: Flutter version
+        run: flutter --version
 
-          ZIP=""
+      - name: Get dependencies
+        run: flutter pub get
 
-          if [ -f "SADEE_X_DIMA_OPTIMIZER_REAL_CYBER_V9_FULL_FIXED.zip" ]; then
-            ZIP="SADEE_X_DIMA_OPTIMIZER_REAL_CYBER_V9_FULL_FIXED.zip"
-          else
-            ZIP="$(find . -maxdepth 3 -type f -iname '*.zip' | head -n 1 || true)"
-          fi
+      - name: Analyze
+        run: flutter analyze
 
-          if [ -z "$ZIP" ]; then
-            echo "ERROR: No source ZIP found."
-            exit 1
-          fi
+      - name: Build APK
+        run: flutter build apk --release
 
-          echo "========================================"
-          echo "ZIP SOURCE: $ZIP"
-          echo "========================================"
-
-          rm -rf extracted_project
-          mkdir -p extracted_project
-
-          unzip -q "$ZIP" -d extracted_project
-
-          PUBSPEC="$(find extracted_project -type f -name pubspec.yaml -print -quit)"
-
-          if [ -z "$PUBSPEC" ]; then
-            echo "ERROR: pubspec.yaml not found inside ZIP."
-            echo "ZIP CONTENT:"
-            find extracted_project -maxdepth 4 -type f | head -200
-            exit 1
-          fi
-
-          PROJECT_DIR="$(dirname "$PUBSPEC")"
-          PROJECT_DIR="$(cd "$PROJECT_DIR" && pwd)"
-
-          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-
-          echo "========================================"
-          echo "FLUTTER PROJECT FOUND"
-          echo "$PROJECT_DIR"
-          echo "========================================"
-
-      - name: Repair mislabeled logo PNG
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          cd "$PROJECT_DIR"
-
-          python3 -m pip install \
-            --quiet \
-            --disable-pip-version-check \
-            --user \
-            pillow
-
-          python3 - <<'PY'
-          from pathlib import Path
-          from PIL import Image
-
-          files = list(
-              Path("android/app/src/main/res").rglob("sadee_logo.png")
-          )
-
-          if not files:
-              print("No sadee_logo.png found. Skipping.")
-          else:
-              for p in files:
-                  print(f"Checking logo: {p}")
-
-                  image = Image.open(p)
-                  image.load()
-
-                  tmp = p.with_suffix(".fixed.png")
-
-                  image.convert("RGBA").save(
-                      tmp,
-                      "PNG"
-                  )
-
-                  tmp.replace(p)
-
-                  print(f"PNG repaired: {p}")
-          PY
-
-      - name: Repair known Dart syntax
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          cd "$PROJECT_DIR"
-
-          python3 - <<'PY'
-          from pathlib import Path
-
-          p = Path("lib/screens/user_home.dart")
-
-          if not p.exists():
-              print("user_home.dart not found.")
-              raise SystemExit(0)
-
-          s = p.read_text()
-
-          # Fix malformed ternary syntax
-          s = s.replace(
-              "c=='temp'?.5:1",
-              "c == 'temp' ? .5 : 1"
-          )
-
-          s = s.replace(
-              "c == 'temp'?.5:1",
-              "c == 'temp' ? .5 : 1"
-          )
-
-          s = s.replace(
-              "c=='temp' ? .5 :1",
-              "c == 'temp' ? .5 : 1"
-          )
-
-          # Fix Border.all positional Color argument
-          s = s.replace(
-              "Border.all((x['c'] as Color).withOpacity(.25))",
-              "Border.all(color: (x['c'] as Color).withOpacity(.25))"
-          )
-
-          p.write_text(s)
-
-          print("Dart source repair completed.")
-          PY
-
-      - name: Verify Flutter project
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          cd "$PROJECT_DIR"
-
-          test -f pubspec.yaml
-          test -f lib/main_user.dart
-          test -f lib/main_admin.dart
-
-          echo "Flutter project verification PASSED."
-
-      - name: Flutter clean
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          cd "$PROJECT_DIR"
-
-          flutter clean
-
-      - name: Flutter pub get
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          cd "$PROJECT_DIR"
-
-          flutter pub get
-
-      - name: Flutter analyze
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          cd "$PROJECT_DIR"
-
-          flutter analyze \
-            --no-fatal-infos \
-            --no-fatal-warnings
-
-      - name: Build USER APK
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          cd "$PROJECT_DIR"
-
-          flutter build apk \
-            --release \
-            --flavor user \
-            -t lib/main_user.dart
-
-      - name: Build ADMIN APK
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          cd "$PROJECT_DIR"
-
-          flutter build apk \
-            --release \
-            --flavor admin \
-            -t lib/main_admin.dart
-
-      - name: Show APK files
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "========================================"
-          echo "BUILD OUTPUTS"
-          echo "========================================"
-
-          find "$PROJECT_DIR/build/app/outputs/flutter-apk" \
-            -type f \
-            -name "*.apk" \
-            -print
-
-      - name: Upload APKs
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: sadee-x-dima-apks
-          path: ${{ env.PROJECT_DIR }}/build/app/outputs/flutter-apk/*.apk
-          if-no-files-found: error
+          name: sadee-x-dima-optimizer-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
