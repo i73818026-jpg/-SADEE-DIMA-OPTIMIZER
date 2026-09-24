@@ -1,4 +1,4 @@
-name: SADEE X DIMA - Build APKs
+name: SADEE X DIMA APK BUILD
 
 on:
   push:
@@ -11,12 +11,13 @@ permissions:
 
 jobs:
   build:
-    name: Build User + Admin APK
+    name: Build User and Admin APK
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
     steps:
-      - name: Checkout repository
+
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup Flutter
@@ -25,86 +26,85 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Show Flutter version
-        run: |
-          flutter --version
-          dart --version
+      - name: Flutter Version
+        run: flutter --version
 
-      # ---------------------------------------------------------
-      # 1. Find ZIP and extract it
-      # ---------------------------------------------------------
-      - name: Find and extract project ZIP
+      # =====================================================
+      # FIND ZIP
+      # =====================================================
+
+      - name: Find Project ZIP
         shell: bash
         run: |
-          set -euo pipefail
+          set -e
+
+          ZIP_FILE=$(find . -maxdepth 2 -type f -name "*.zip" | head -n 1)
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo "ERROR: Project ZIP not found"
+            exit 1
+          fi
+
+          echo "ZIP: $ZIP_FILE"
+          echo "ZIP_FILE=$ZIP_FILE" >> "$GITHUB_ENV"
+
+      # =====================================================
+      # EXTRACT ZIP
+      # =====================================================
+
+      - name: Extract Project
+        shell: bash
+        run: |
+          set -e
 
           rm -rf extracted_project
           mkdir -p extracted_project
 
-          ZIP_FILE=""
-
-          if [ -f "SADEE_X_DIMA_FULL_V6_PATCH.zip" ]; then
-            ZIP_FILE="SADEE_X_DIMA_FULL_V6_PATCH.zip"
-          else
-            ZIP_FILE="$(find . -type f -name '*.zip' \
-              -not -path './extracted_project/*' \
-              | head -n 1)"
-          fi
-
-          if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: No project ZIP found."
-            exit 1
-          fi
-
-          echo "Using ZIP: $ZIP_FILE"
-
           unzip -q "$ZIP_FILE" -d extracted_project
 
-          PUBSPEC="$(find "$GITHUB_WORKSPACE/extracted_project" \
-            -type f -name pubspec.yaml \
-            -print -quit)"
+          PUBSPEC=$(find "$GITHUB_WORKSPACE/extracted_project" \
+            -type f \
+            -name "pubspec.yaml" \
+            -print -quit)
 
           if [ -z "$PUBSPEC" ]; then
-            echo "ERROR: pubspec.yaml not found inside ZIP."
-            find extracted_project -maxdepth 5 -type f | head -200
+            echo "ERROR: pubspec.yaml not found"
+            find extracted_project -maxdepth 5 -type f
             exit 1
           fi
 
-          PROJECT_DIR="$(dirname "$PUBSPEC")"
+          PROJECT_DIR=$(dirname "$PUBSPEC")
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-          echo "Flutter project:"
+          echo "Project:"
           echo "$PROJECT_DIR"
 
-          test -f "$PROJECT_DIR/pubspec.yaml"
+      # =====================================================
+      # VERIFY PROJECT
+      # =====================================================
 
-      # ---------------------------------------------------------
-      # 2. Verify important files
-      # ---------------------------------------------------------
-      - name: Verify Flutter project
+      - name: Verify Project
         shell: bash
         run: |
-          set -euo pipefail
+          set -e
 
           cd "$PROJECT_DIR"
 
-          echo "Checking project files..."
-
           test -f pubspec.yaml
-          test -d lib
           test -f lib/main_user.dart
           test -f lib/main_admin.dart
 
-          echo "Flutter project OK"
+          echo "Project verification OK"
 
-      # ---------------------------------------------------------
-      # 3. Repair logo PNG if required
-      # ---------------------------------------------------------
-      - name: Repair Android PNG resources
+      # =====================================================
+      # FIX ANDROID PNG
+      # =====================================================
+
+      - name: Repair PNG Resources
         shell: bash
         run: |
-          set -euo pipefail
+          set -e
 
           cd "$PROJECT_DIR"
 
@@ -117,317 +117,27 @@ jobs:
           root = Path("android/app/src/main/res")
 
           if not root.exists():
-              print("Android res folder not found - skipping PNG repair.")
+              print("No Android res directory")
               raise SystemExit(0)
 
-          repaired = 0
-
-          for path in root.rglob("*.png"):
+          for file in root.rglob("*.png"):
               try:
-                  with Image.open(path) as img:
-                      img.load()
-
-                      # Re-encode valid PNGs only when Pillow can read them.
-                      # This fixes corrupted AAPT PNG resources.
-                      rgba = img.convert("RGBA")
-                      rgba.save(path, format="PNG")
-
-                  repaired += 1
-                  print(f"Repaired: {path}")
-
-              except Exception as exc:
-                  print(f"Skipped: {path} ({exc})")
-
-          print(f"PNG resources processed: {repaired}")
+                  img = Image.open(file)
+                  img.load()
+                  img.convert("RGBA").save(file, "PNG")
+                  print("OK:", file)
+              except Exception as e:
+                  print("Skipped:", file, e)
           PY
 
-      # ---------------------------------------------------------
-      # 4. Patch real Android system notification support
-      # ---------------------------------------------------------
-      - name: Patch Android system notifications
+      # =====================================================
+      # FIX ANDROID VERSIONS
+      # =====================================================
+
+      - name: Fix Android Build Versions
         shell: bash
         run: |
-          set -euo pipefail
-
-          cd "$PROJECT_DIR"
-
-          python3 <<'PY'
-          from pathlib import Path
-          import re
-
-          # -----------------------------------------------------
-          # user_home.dart
-          # -----------------------------------------------------
-          user_home = Path("lib/screens/user_home.dart")
-
-          if user_home.exists():
-              text = user_home.read_text(encoding="utf-8")
-
-              # Add MethodChannel import
-              if "package:flutter/services.dart" not in text:
-                  marker = "import 'package:flutter/material.dart';"
-
-                  if marker in text:
-                      text = text.replace(
-                          marker,
-                          marker + "\n"
-                          "import 'package:flutter/services.dart';",
-                          1,
-                      )
-                  else:
-                      text = (
-                          "import 'package:flutter/services.dart';\n"
-                          + text
-                      )
-
-              # Add system notification helper
-              if "Future<void> _systemNotify(" not in text:
-                  helper = r'''
-            Future<void> _systemNotify(
-              String title,
-              String message,
-            ) async {
-              try {
-                const channel = MethodChannel(
-                  'sadee_x_dima/system',
-                );
-
-                await channel.invokeMethod(
-                  'notifyUser',
-                  <String, dynamic>{
-                    'title': title,
-                    'text': message,
-                  },
-                );
-              } catch (_) {}
-            }
-
-          '''
-
-                  marker = "  Future<void> _cleanSelected() async"
-
-                  if marker in text:
-                      text = text.replace(
-                          marker,
-                          helper + marker,
-                          1,
-                      )
-                  else:
-                      print(
-                          "WARNING: _cleanSelected() not found; "
-                          "notification helper was not inserted."
-                      )
-
-              # Selected cleaner notification
-              if (
-                  "Cleaner completed" not in text
-                  and "_cleanSelected()" in text
-              ):
-                  old = (
-                      "_msg('Cleaned ${result['deleted']??0} files "
-                      "• ${_bytes(bytes)}',green);"
-                  )
-
-                  new = (
-                      "_msg('Cleaned ${result['deleted']??0} files "
-                      "• ${_bytes(bytes)}',green);\n"
-                      "            await _systemNotify(\n"
-                      "              '🧹 SADEE X DIMA',\n"
-                      "              'Cleaner completed • '\n"
-                      "              '${result['deleted']??0} files cleaned • '\n"
-                      "              '${_bytes(bytes)} freed',\n"
-                      "            );"
-                  )
-
-                  if old in text:
-                      text = text.replace(old, new, 1)
-
-              # Cache notification
-              if "Cache cleaner completed" not in text:
-                  old = (
-                      "_msg('App cache cleaned • "
-                      "${_bytes(cleared)}',green);"
-                  )
-
-                  new = (
-                      "_msg('App cache cleaned • "
-                      "${_bytes(cleared)}',green);\n"
-                      "            await _systemNotify(\n"
-                      "              '🧹 SADEE X DIMA',\n"
-                      "              'Cache cleaner completed • '\n"
-                      "              '${_bytes(cleared)} freed',\n"
-                      "            );"
-                  )
-
-                  if old in text:
-                      text = text.replace(old, new, 1)
-
-              # RAM notification
-              if "RAM cleaner completed" not in text:
-                  old = (
-                      "_msg('App-owned cleanup done • RAM "
-                      "${before.toStringAsFixed(0)}% → "
-                      "${after.toStringAsFixed(0)}% "
-                      "(Android decides system reclaim)',green);"
-                  )
-
-                  new = (
-                      old + "\n"
-                      "            await _systemNotify(\n"
-                      "              '⚡ SADEE X DIMA',\n"
-                      "              'RAM cleaner completed • '\n"
-                      "              'App-owned cleanup finished',\n"
-                      "            );"
-                  )
-
-                  if old in text:
-                      text = text.replace(old, new, 1)
-
-              user_home.write_text(text, encoding="utf-8")
-              print("user_home.dart notification patch checked.")
-
-          # -----------------------------------------------------
-          # OptimizerService compatibility
-          # -----------------------------------------------------
-          optimizer = Path("lib/services/optimizer_service.dart")
-
-          if optimizer.exists():
-              text = optimizer.read_text(encoding="utf-8")
-
-              if "Future<void> notifyOperation(" not in text:
-                  method = r'''
-            Future<void> notifyOperation(
-              String title,
-              String text,
-            ) async {
-              try {
-                await _channel.invokeMethod(
-                  'notifyUser',
-                  <String, dynamic>{
-                    'title': title,
-                    'text': text,
-                  },
-                );
-              } catch (_) {}
-            }
-          '''
-
-                  # Insert before final class brace
-                  pos = text.rfind("\n}")
-
-                  if pos != -1:
-                      text = (
-                          text[:pos]
-                          + "\n"
-                          + method
-                          + text[pos:]
-                      )
-
-                      optimizer.write_text(
-                          text,
-                          encoding="utf-8",
-                      )
-
-                      print(
-                          "OptimizerService.notifyOperation added."
-                      )
-
-          # -----------------------------------------------------
-          # MainActivity.kt
-          # -----------------------------------------------------
-          kotlin = Path(
-              "android/app/src/main/kotlin/"
-              "com/sadeedima/sadee_x_dima/MainActivity.kt"
-          )
-
-          if not kotlin.exists():
-              raise SystemExit(
-                  "ERROR: MainActivity.kt not found."
-              )
-
-          text = kotlin.read_text(encoding="utf-8")
-
-          # V6 already has notifyUser().
-          # Add MethodChannel routing only if missing.
-          if '"notifyUser"' not in text:
-              marker = '                "deleteFiles" ->'
-
-              route = r'''                "notifyUser" -> notifyUser(
-                    call.argument<String>("title")
-                        ?: "SADEE X DIMA",
-                    call.argument<String>("text")
-                        ?: ""
-                )
-'''
-
-              if marker in text:
-                  text = text.replace(
-                      marker,
-                      route + marker,
-                      1,
-                  )
-
-          if '"notifyOperation"' not in text:
-              marker = '                "deleteFiles" ->'
-
-              route = r'''                "notifyOperation" -> notifyUser(
-                    call.argument<String>("title")
-                        ?: "SADEE X DIMA",
-                    call.argument<String>("text")
-                        ?: ""
-                )
-'''
-
-              if marker in text:
-                  text = text.replace(
-                      marker,
-                      route + marker,
-                      1,
-                  )
-
-          kotlin.write_text(text, encoding="utf-8")
-
-          # -----------------------------------------------------
-          # AndroidManifest notification permission
-          # -----------------------------------------------------
-          manifest = Path(
-              "android/app/src/main/AndroidManifest.xml"
-          )
-
-          text = manifest.read_text(encoding="utf-8")
-
-          permission = (
-              '<uses-permission '
-              'android:name="android.permission.POST_NOTIFICATIONS"/>'
-          )
-
-          if "android.permission.POST_NOTIFICATIONS" not in text:
-              end = text.find(">")
-
-              if end == -1:
-                  raise SystemExit(
-                      "ERROR: Invalid AndroidManifest.xml"
-                  )
-
-              text = (
-                  text[:end + 1]
-                  + "\n    "
-                  + permission
-                  + text[end + 1:]
-              )
-
-          manifest.write_text(text, encoding="utf-8")
-
-          print("Android system notification patch complete.")
-          PY
-
-      # ---------------------------------------------------------
-      # 5. Patch Flutter/Android build versions
-      # ---------------------------------------------------------
-      - name: Patch Android build versions
-        shell: bash
-        run: |
-          set -euo pipefail
+          set -e
 
           cd "$PROJECT_DIR"
 
@@ -436,148 +146,209 @@ jobs:
           import re
 
           # Gradle wrapper
-          gradle = Path(
-              "android/gradle/wrapper/gradle-wrapper.properties"
-          )
+          p = Path("android/gradle/wrapper/gradle-wrapper.properties")
 
-          if gradle.exists():
-              text = gradle.read_text(encoding="utf-8")
+          if p.exists():
+              s = p.read_text()
 
-              text = re.sub(
+              s = re.sub(
                   r"gradle-[0-9.]+-all\.zip",
                   "gradle-8.14.5-all.zip",
-                  text,
+                  s
               )
 
-              gradle.write_text(text, encoding="utf-8")
+              p.write_text(s)
 
-          # Root Android build.gradle
-          build = Path("android/build.gradle")
+          # android/build.gradle
+          p = Path("android/build.gradle")
 
-          if build.exists():
-              text = build.read_text(encoding="utf-8")
+          if p.exists():
+              s = p.read_text()
 
-              text = re.sub(
+              s = re.sub(
                   r"com\.android\.tools\.build:gradle:[0-9.]+",
                   "com.android.tools.build:gradle:8.11.1",
-                  text,
+                  s
               )
 
-              text = re.sub(
+              s = re.sub(
                   r"ext\.kotlin_version\s*=\s*['\"][^'\"]+['\"]",
                   "ext.kotlin_version = '2.2.20'",
-                  text,
+                  s
               )
 
-              text = re.sub(
+              s = re.sub(
                   r"org\.jetbrains\.kotlin:kotlin-gradle-plugin:[0-9.]+",
                   "org.jetbrains.kotlin:kotlin-gradle-plugin:2.2.20",
-                  text,
+                  s
               )
 
-              build.write_text(text, encoding="utf-8")
+              p.write_text(s)
 
-          # settings.gradle plugin versions
-          settings = Path("android/settings.gradle")
+          # settings.gradle
+          p = Path("android/settings.gradle")
 
-          if settings.exists():
-              text = settings.read_text(encoding="utf-8")
+          if p.exists():
+              s = p.read_text()
 
-              text = re.sub(
-                  r'id\s+["\']com\.android\.application["\']\s+version\s+["\'][^"\']+["\']',
-                  'id "com.android.application" version "8.11.1"',
-                  text,
+              s = re.sub(
+                  r'(id\s+["\']com\.android\.application["\']\s+version\s+["\'])[^"\']+(["\'])',
+                  r'\g<1>8.11.1\2',
+                  s
               )
 
-              text = re.sub(
-                  r'id\s+["\']org\.jetbrains\.kotlin\.android["\']\s+version\s+["\'][^"\']+["\']',
-                  'id "org.jetbrains.kotlin.android" version "2.2.20"',
-                  text,
+              s = re.sub(
+                  r'(id\s+["\']org\.jetbrains\.kotlin\.android["\']\s+version\s+["\'])[^"\']+(["\'])',
+                  r'\g<1>2.2.20\2',
+                  s
               )
 
-              settings.write_text(
-                  text,
-                  encoding="utf-8",
-              )
+              p.write_text(s)
 
-          print("Android build versions patched.")
+          print("Android versions fixed")
           PY
 
-      # ---------------------------------------------------------
-      # 6. Make sure flavors exist
-      # ---------------------------------------------------------
-      - name: Verify product flavors
+      # =====================================================
+      # ADD NOTIFICATION PERMISSION
+      # =====================================================
+
+      - name: Add Notification Permission
         shell: bash
         run: |
-          set -euo pipefail
+          set -e
 
           cd "$PROJECT_DIR"
 
-          if ! grep -Rqs "productFlavors" android/app; then
-            echo "ERROR: productFlavors not found."
-            exit 1
-          fi
+          python3 <<'PY'
+          from pathlib import Path
 
-          echo "productFlavors found."
+          p = Path("android/app/src/main/AndroidManifest.xml")
+          s = p.read_text()
 
-      # ---------------------------------------------------------
-      # 7. Verify notification patch
-      # ---------------------------------------------------------
-      - name: Verify notification implementation
+          permission = (
+              '<uses-permission '
+              'android:name="android.permission.POST_NOTIFICATIONS"/>'
+          )
+
+          if "POST_NOTIFICATIONS" not in s:
+              pos = s.find(">")
+
+              if pos == -1:
+                  raise SystemExit("Invalid AndroidManifest.xml")
+
+              s = (
+                  s[:pos + 1]
+                  + "\n    "
+                  + permission
+                  + s[pos + 1:]
+              )
+
+              p.write_text(s)
+
+          print("Notification permission OK")
+          PY
+
+      # =====================================================
+      # ADD SYSTEM NOTIFICATION BRIDGE
+      # =====================================================
+
+      - name: Fix System Notification Bridge
         shell: bash
         run: |
-          set -euo pipefail
+          set -e
 
           cd "$PROJECT_DIR"
 
-          grep -Fq "sadee_x_dima/system" \
-            lib/screens/user_home.dart
+          python3 <<'PY'
+          from pathlib import Path
 
-          grep -Fq "_systemNotify" \
-            lib/screens/user_home.dart
+          p = Path(
+              "android/app/src/main/kotlin/"
+              "com/sadeedima/sadee_x_dima/MainActivity.kt"
+          )
 
-          grep -Fq "notifyUser" \
-            android/app/src/main/kotlin/com/sadeedima/sadee_x_dima/MainActivity.kt
+          if not p.exists():
+              raise SystemExit("MainActivity.kt not found")
 
-          grep -Fq "NotificationManager" \
-            android/app/src/main/kotlin/com/sadeedima/sadee_x_dima/MainActivity.kt
+          s = p.read_text()
 
-          grep -Fq "POST_NOTIFICATIONS" \
-            android/app/src/main/AndroidManifest.xml
+          # V6 already contains notifyUser in most versions.
+          # Only add routing when it is missing.
+          if '"notifyUser"' not in s:
 
-          echo "REAL ANDROID SYSTEM NOTIFICATION: OK"
+              marker = '"deleteFiles" ->'
 
-      # ---------------------------------------------------------
-      # 8. Clean
-      # ---------------------------------------------------------
-      - name: Flutter clean
+              route = '''
+                "notifyUser" -> notifyUser(
+                    call.argument<String>("title")
+                        ?: "SADEE X DIMA",
+                    call.argument<String>("text")
+                        ?: ""
+                )
+'''
+
+              if marker in s:
+                  s = s.replace(
+                      marker,
+                      route + "\n                " + marker,
+                      1
+                  )
+
+          p.write_text(s)
+
+          print("System notification bridge checked")
+          PY
+
+      # =====================================================
+      # CHECK FLAVORS
+      # =====================================================
+
+      - name: Check Product Flavors
+        shell: bash
+        run: |
+          set -e
+
+          cd "$PROJECT_DIR"
+
+          grep -Rqs "productFlavors" android/app
+
+          echo "Product flavors OK"
+
+      # =====================================================
+      # CLEAN
+      # =====================================================
+
+      - name: Flutter Clean
         shell: bash
         run: |
           cd "$PROJECT_DIR"
           flutter clean
 
-      # ---------------------------------------------------------
-      # 9. Pub get
-      # ---------------------------------------------------------
-      - name: Flutter pub get
+      # =====================================================
+      # PUB GET
+      # =====================================================
+
+      - name: Flutter Pub Get
         shell: bash
         run: |
           cd "$PROJECT_DIR"
           flutter pub get
 
-      # ---------------------------------------------------------
-      # 10. Format
-      # ---------------------------------------------------------
-      - name: Dart format
+      # =====================================================
+      # FORMAT
+      # =====================================================
+
+      - name: Dart Format
         shell: bash
         run: |
           cd "$PROJECT_DIR"
           dart format lib
 
-      # ---------------------------------------------------------
-      # 11. Analyze
-      # ---------------------------------------------------------
-      - name: Flutter analyze
+      # =====================================================
+      # ANALYZE
+      # =====================================================
+
+      - name: Flutter Analyze
         shell: bash
         run: |
           cd "$PROJECT_DIR"
@@ -586,13 +357,14 @@ jobs:
             --no-fatal-infos \
             --no-fatal-warnings
 
-      # ---------------------------------------------------------
-      # 12. Build USER APK
-      # ---------------------------------------------------------
-      - name: Build USER APK
+      # =====================================================
+      # BUILD USER
+      # =====================================================
+
+      - name: Build User APK
         shell: bash
         run: |
-          set -euo pipefail
+          set -e
 
           cd "$PROJECT_DIR"
 
@@ -601,13 +373,14 @@ jobs:
             --flavor user \
             -t lib/main_user.dart
 
-      # ---------------------------------------------------------
-      # 13. Build ADMIN APK
-      # ---------------------------------------------------------
-      - name: Build ADMIN APK
+      # =====================================================
+      # BUILD ADMIN
+      # =====================================================
+
+      - name: Build Admin APK
         shell: bash
         run: |
-          set -euo pipefail
+          set -e
 
           cd "$PROJECT_DIR"
 
@@ -616,28 +389,29 @@ jobs:
             --flavor admin \
             -t lib/main_admin.dart
 
-      # ---------------------------------------------------------
-      # 14. Collect APKs
-      # ---------------------------------------------------------
-      - name: Prepare APK artifacts
+      # =====================================================
+      # COLLECT APK
+      # =====================================================
+
+      - name: Collect APK Files
         shell: bash
         run: |
-          set -euo pipefail
+          set -e
 
-          mkdir -p "$GITHUB_WORKSPACE/apk_output"
+          mkdir -p apk_output
 
           find "$PROJECT_DIR/build/app/outputs/flutter-apk" \
             -type f \
             -name "*.apk" \
-            -exec cp {} "$GITHUB_WORKSPACE/apk_output/" \;
+            -exec cp {} apk_output/ \;
 
-          echo "APK files:"
-          ls -lh "$GITHUB_WORKSPACE/apk_output"
+          ls -lh apk_output
 
-      # ---------------------------------------------------------
-      # 15. Upload APKs
-      # ---------------------------------------------------------
-      - name: Upload APK artifacts
+      # =====================================================
+      # UPLOAD APK
+      # =====================================================
+
+      - name: Upload APKs
         uses: actions/upload-artifact@v4
         with:
           name: SADEE-X-DIMA-APKs
