@@ -1,4 +1,4 @@
-name: SADEE X DIMA - REAL SUPABASE BUILD
+name: SADEE X DIMA - BUILD
 
 on:
   workflow_dispatch:
@@ -15,25 +15,25 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # --------------------------------------------------
-      # 1. Checkout
-      # --------------------------------------------------
-      - name: Checkout repository
+
+      # ==========================================
+      # 1. CHECKOUT
+      # ==========================================
+      - name: Checkout
         uses: actions/checkout@v4
 
-      # --------------------------------------------------
-      # 2. Java 17
-      # --------------------------------------------------
+      # ==========================================
+      # 2. JAVA 17
+      # ==========================================
       - name: Setup Java 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
-          cache: gradle
 
-      # --------------------------------------------------
-      # 3. Flutter
-      # --------------------------------------------------
+      # ==========================================
+      # 3. FLUTTER
+      # ==========================================
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
@@ -41,19 +41,19 @@ jobs:
           channel: stable
           cache: true
 
-      # --------------------------------------------------
-      # 4. Verify tools
-      # --------------------------------------------------
-      - name: Check versions
+      # ==========================================
+      # 4. CHECK
+      # ==========================================
+      - name: Check tools
         run: |
           flutter --version
           dart --version
           java -version
 
-      # --------------------------------------------------
-      # 5. Prepare User Flutter project
-      # --------------------------------------------------
-      - name: Create User Android project
+      # ==========================================
+      # 5. CREATE USER FLUTTER PROJECT
+      # ==========================================
+      - name: Prepare User App
         shell: bash
         run: |
           set -e
@@ -77,10 +77,10 @@ jobs:
           cp user/pubspec.yaml \
              user_build/pubspec.yaml
 
-      # --------------------------------------------------
-      # 6. Prepare Admin Flutter project
-      # --------------------------------------------------
-      - name: Create Admin Android project
+      # ==========================================
+      # 6. CREATE ADMIN FLUTTER PROJECT
+      # ==========================================
+      - name: Prepare Admin App
         shell: bash
         run: |
           set -e
@@ -104,86 +104,86 @@ jobs:
           cp admin/pubspec.yaml \
              admin_build/pubspec.yaml
 
-      # --------------------------------------------------
-      # 7. Check Supabase secret
-      # --------------------------------------------------
-      - name: Validate Supabase publishable key
+      # ==========================================
+      # 7. SUPABASE SECRET CHECK
+      # ==========================================
+      - name: Check Supabase key
         env:
-          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: |
-          if [ -z "$SUPABASE_ANON_KEY" ]; then
-            echo "ERROR: SUPABASE_ANON_KEY GitHub Secret is missing."
+          if [ -z "$SUPABASE_KEY" ]; then
+            echo "ERROR: SUPABASE_ANON_KEY secret is missing."
             exit 1
           fi
 
-          echo "Supabase publishable key is configured."
+          echo "Supabase key configured."
 
-      # --------------------------------------------------
-      # 8. User dependencies
-      # --------------------------------------------------
-      - name: User - Flutter pub get
+      # ==========================================
+      # 8. USER PUB GET
+      # ==========================================
+      - name: User pub get
         working-directory: user_build
         run: |
           flutter pub get
 
-      # --------------------------------------------------
-      # 9. Admin dependencies
-      # --------------------------------------------------
-      - name: Admin - Flutter pub get
+      # ==========================================
+      # 9. ADMIN PUB GET
+      # ==========================================
+      - name: Admin pub get
         working-directory: admin_build
         run: |
           flutter pub get
 
-      # --------------------------------------------------
-      # 10. User analyze
-      # --------------------------------------------------
-      - name: User - Analyze
+      # ==========================================
+      # 10. USER ANALYZE
+      # ==========================================
+      - name: Analyze User
         working-directory: user_build
         run: |
           flutter analyze \
             --no-fatal-infos \
             --no-fatal-warnings
 
-      # --------------------------------------------------
-      # 11. Admin analyze
-      # --------------------------------------------------
-      - name: Admin - Analyze
+      # ==========================================
+      # 11. ADMIN ANALYZE
+      # ==========================================
+      - name: Analyze Admin
         working-directory: admin_build
         run: |
           flutter analyze \
             --no-fatal-infos \
             --no-fatal-warnings
 
-      # --------------------------------------------------
-      # 12. User release APK
-      # --------------------------------------------------
+      # ==========================================
+      # 12. BUILD USER APK
+      # ==========================================
       - name: Build User APK
         working-directory: user_build
         env:
-          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: |
           flutter build apk \
             --release \
             -t lib/main_user.dart \
-            --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY"
+            --dart-define=SUPABASE_ANON_KEY="$SUPABASE_KEY"
 
-      # --------------------------------------------------
-      # 13. Admin release APK
-      # --------------------------------------------------
+      # ==========================================
+      # 13. BUILD ADMIN APK
+      # ==========================================
       - name: Build Admin APK
         working-directory: admin_build
         env:
-          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: |
           flutter build apk \
             --release \
             -t lib/main_admin.dart \
-            --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY"
+            --dart-define=SUPABASE_ANON_KEY="$SUPABASE_KEY"
 
-      # --------------------------------------------------
-      # 14. Rename APKs
-      # --------------------------------------------------
-      - name: Rename APK files
+      # ==========================================
+      # 14. COPY APK
+      # ==========================================
+      - name: Prepare APK files
         shell: bash
         run: |
           set -e
@@ -196,30 +196,23 @@ jobs:
             admin_build/build/app/outputs/flutter-apk/app-release.apk \
             SADEE-X-DIMA-ADMIN.apk
 
-          ls -lh *.apk
-
-      # --------------------------------------------------
-      # 15. Verify APK files
-      # --------------------------------------------------
-      - name: Verify APKs
-        shell: bash
-        run: |
-          test -s SADEE-X-DIMA-OPTIMIZER.apk
-          test -s SADEE-X-DIMA-ADMIN.apk
-
-          echo "USER APK:"
+          echo "================================="
+          echo "USER APK"
+          echo "================================="
           ls -lh SADEE-X-DIMA-OPTIMIZER.apk
 
-          echo "ADMIN APK:"
+          echo "================================="
+          echo "ADMIN APK"
+          echo "================================="
           ls -lh SADEE-X-DIMA-ADMIN.apk
 
-      # --------------------------------------------------
-      # 16. Upload artifacts
-      # --------------------------------------------------
+      # ==========================================
+      # 15. UPLOAD APKs
+      # ==========================================
       - name: Upload APKs
         uses: actions/upload-artifact@v4
         with:
-          name: SADEE-X-DIMA-RELEASE-APKS
+          name: SADEE-X-DIMA-APKS
           if-no-files-found: error
           path: |
             SADEE-X-DIMA-OPTIMIZER.apk
