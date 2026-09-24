@@ -16,7 +16,7 @@ jobs:
     steps:
 
       # ============================================================
-      # 1. CHECKOUT
+      # CHECKOUT
       # ============================================================
 
       - name: Checkout Repository
@@ -24,7 +24,7 @@ jobs:
 
 
       # ============================================================
-      # 2. JAVA 17
+      # JAVA 17
       # ============================================================
 
       - name: Setup Java 17
@@ -35,7 +35,7 @@ jobs:
 
 
       # ============================================================
-      # 3. FIND ZIP
+      # FIND ZIP
       # ============================================================
 
       - name: Find Project ZIP
@@ -45,38 +45,27 @@ jobs:
 
           echo "=============================================="
           echo " SADEE X DIMA"
-          echo " SEARCHING PROJECT ZIP"
+          echo " SEARCHING ZIP"
           echo "=============================================="
 
           ZIP_FILE=""
 
-          if [ -f "$GITHUB_WORKSPACE/SADEE_X_DIMA_OPTIMIZER_REAL_USER_ADMIN.zip" ]; then
-            ZIP_FILE="$GITHUB_WORKSPACE/SADEE_X_DIMA_OPTIMIZER_REAL_USER_ADMIN.zip"
-          else
-            ZIP_FILE="$(
-              find "$GITHUB_WORKSPACE" \
-                -type f \
-                -iname "*.zip" \
-                -not -path "*/.git/*" \
-                | head -n 1 || true
-            )"
-          fi
+          ZIP_FILE="$(
+            find "$GITHUB_WORKSPACE" \
+              -type f \
+              -iname "*.zip" \
+              -not -path "*/.git/*" \
+              | head -n 1 || true
+          )"
 
           if [ -z "$ZIP_FILE" ]; then
-            echo ""
-            echo "ERROR: No ZIP file found."
-            echo ""
-            echo "Repository files:"
-            find "$GITHUB_WORKSPACE" \
-              -maxdepth 5 \
-              -type f \
-              -print
+            echo "ERROR: ZIP file not found."
+            find "$GITHUB_WORKSPACE" -maxdepth 5 -type f -print
             exit 1
           fi
 
           ZIP_FILE="$(realpath "$ZIP_FILE")"
 
-          echo ""
           echo "ZIP FOUND:"
           echo "$ZIP_FILE"
 
@@ -84,10 +73,10 @@ jobs:
 
 
       # ============================================================
-      # 4. EXTRACT ZIP
+      # EXTRACT ZIP
       # ============================================================
 
-      - name: Extract ZIP Project
+      - name: Extract ZIP
         shell: bash
         run: |
           set -euo pipefail
@@ -103,12 +92,11 @@ jobs:
           unzip -o "$ZIP_FILE" \
             -d "$GITHUB_WORKSPACE/extracted_project"
 
-          echo ""
-          echo "ZIP extraction completed."
+          echo "Extraction complete."
 
 
       # ============================================================
-      # 5. LOCATE FLUTTER PROJECT
+      # LOCATE FLUTTER PROJECT
       # ============================================================
 
       - name: Locate Flutter Project
@@ -129,11 +117,8 @@ jobs:
           )"
 
           if [ -z "$PUBSPEC_FILE" ]; then
-            echo ""
             echo "ERROR: pubspec.yaml not found."
 
-            echo ""
-            echo "Extracted tree:"
             find "$GITHUB_WORKSPACE/extracted_project" \
               -maxdepth 7 \
               -print
@@ -144,46 +129,14 @@ jobs:
           PROJECT_DIR="$(dirname "$PUBSPEC_FILE")"
           PROJECT_DIR="$(cd "$PROJECT_DIR" && pwd)"
 
-          echo ""
-          echo "PUBSPEC:"
-          echo "$PUBSPEC_FILE"
-
-          echo ""
-          echo "PROJECT DIRECTORY:"
+          echo "PROJECT_DIR:"
           echo "$PROJECT_DIR"
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
 
       # ============================================================
-      # 6. VERIFY PROJECT
-      # ============================================================
-
-      - name: Verify Flutter Project
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          cd "$PROJECT_DIR"
-
-          echo "=============================================="
-          echo " VERIFYING PROJECT"
-          echo "=============================================="
-
-          test -f pubspec.yaml
-          test -f lib/main_user.dart
-          test -f lib/main_admin.dart
-          test -f android/app/build.gradle
-
-          echo ""
-          echo "pubspec.yaml       : OK"
-          echo "main_user.dart     : OK"
-          echo "main_admin.dart    : OK"
-          echo "app/build.gradle   : OK"
-
-
-      # ============================================================
-      # 7. SETUP FLUTTER
+      # SETUP FLUTTER
       # ============================================================
 
       - name: Setup Flutter
@@ -195,10 +148,32 @@ jobs:
 
 
       # ============================================================
-      # 8. FIX JAVA / KOTLIN JVM 17
+      # VERIFY PROJECT
       # ============================================================
 
-      - name: Fix JVM Targets
+      - name: Verify Flutter Project
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd "$PROJECT_DIR"
+
+          test -f pubspec.yaml
+          test -f lib/main_user.dart
+          test -f lib/main_admin.dart
+          test -f android/app/build.gradle
+
+          echo "Flutter project OK."
+
+
+      # ============================================================
+      # REPAIR ANDROID BUILD.GRADLE
+      #
+      # IMPORTANT:
+      # signingConfigs MUST be INSIDE android { }
+      # ============================================================
+
+      - name: Configure Android Gradle Correctly
         shell: bash
         run: |
           set -euo pipefail
@@ -206,47 +181,168 @@ jobs:
           cd "$PROJECT_DIR"
 
           echo "=============================================="
-          echo " CONFIGURING JAVA / KOTLIN JVM 17"
+          echo " CONFIGURING ANDROID GRADLE"
           echo "=============================================="
 
           python3 - <<'PY'
           from pathlib import Path
           import re
 
-          p = Path("android/app/build.gradle")
+          path = Path("android/app/build.gradle")
 
-          if not p.exists():
+          if not path.exists():
               raise SystemExit(
                   "android/app/build.gradle not found"
               )
 
-          s = p.read_text()
+          text = path.read_text()
 
-          # Remove existing compileOptions blocks.
-          s = re.sub(
-              r'\n\s*compileOptions\s*\{.*?\n\s*\}',
-              '',
-              s,
-              flags=re.S
+          # --------------------------------------------------------
+          # Remove any old signingConfigs block.
+          #
+          # This handles blocks accidentally inserted outside
+          # android { } by previous workflow versions.
+          # --------------------------------------------------------
+
+          def remove_named_block(source, name):
+              pattern = re.compile(
+                  r'(?m)^[ \t]*' + re.escape(name) + r'\s*\{'
+              )
+
+              while True:
+                  match = pattern.search(source)
+
+                  if not match:
+                      break
+
+                  start = match.start()
+                  brace_start = source.find("{", match.start())
+
+                  depth = 0
+                  end = None
+
+                  for i in range(brace_start, len(source)):
+                      if source[i] == "{":
+                          depth += 1
+                      elif source[i] == "}":
+                          depth -= 1
+
+                          if depth == 0:
+                              end = i + 1
+                              break
+
+                  if end is None:
+                      raise SystemExit(
+                          f"Could not safely remove {name} block"
+                      )
+
+                  source = source[:start] + source[end:]
+
+              return source
+
+
+          text = remove_named_block(
+              text,
+              "signingConfigs"
           )
 
-          # Remove existing kotlinOptions blocks.
-          s = re.sub(
-              r'\n\s*kotlinOptions\s*\{.*?\n\s*\}',
+
+          # --------------------------------------------------------
+          # Remove old release signingConfig lines.
+          # --------------------------------------------------------
+
+          text = re.sub(
+              r'(?m)^[ \t]*signingConfig\s+signingConfigs\.release\s*$',
               '',
-              s,
-              flags=re.S
+              text
           )
 
-          # Remove existing kotlin toolchain block.
-          s = re.sub(
-              r'\n\s*kotlin\s*\{\s*jvmToolchain\(.*?\)\s*\}',
-              '',
-              s,
-              flags=re.S
+
+          # --------------------------------------------------------
+          # Remove old kotlinOptions blocks.
+          # --------------------------------------------------------
+
+          text = remove_named_block(
+              text,
+              "kotlinOptions"
           )
 
-          block = '''
+
+          # --------------------------------------------------------
+          # Remove old compileOptions blocks.
+          # --------------------------------------------------------
+
+          text = remove_named_block(
+              text,
+              "compileOptions"
+          )
+
+
+          # --------------------------------------------------------
+          # Remove old kotlin { jvmToolchain(...) } blocks.
+          # --------------------------------------------------------
+
+          text = re.sub(
+              r'(?s)\n[ \t]*kotlin\s*\{\s*jvmToolchain\s*\(\s*\d+\s*\)\s*\}',
+              '',
+              text
+          )
+
+
+          # --------------------------------------------------------
+          # Find android { block.
+          # --------------------------------------------------------
+
+          android_match = re.search(
+              r'(?m)^[ \t]*android\s*\{',
+              text
+          )
+
+          if not android_match:
+              raise SystemExit(
+                  "android { } block not found"
+              )
+
+          android_open = text.find(
+              "{",
+              android_match.start()
+          )
+
+
+          # --------------------------------------------------------
+          # Find matching closing brace of android { }.
+          # --------------------------------------------------------
+
+          depth = 0
+          android_close = None
+
+          for i in range(android_open, len(text)):
+
+              char = text[i]
+
+              if char == "{":
+                  depth += 1
+
+              elif char == "}":
+                  depth -= 1
+
+                  if depth == 0:
+                      android_close = i
+                      break
+
+          if android_close is None:
+              raise SystemExit(
+                  "Could not determine android block end"
+              )
+
+
+          # --------------------------------------------------------
+          # JVM configuration.
+          #
+          # This goes INSIDE android { }.
+          # --------------------------------------------------------
+
+          android_config = r'''
               compileOptions {
                   sourceCompatibility JavaVersion.VERSION_17
                   targetCompatibility JavaVersion.VERSION_17
@@ -260,31 +356,250 @@ jobs:
                   jvmToolchain(17)
               }
 
+              signingConfigs {
+                  release {
+                      storeFile file("keystore/sadee-release.jks")
+                      storePassword "sadee2026"
+                      keyAlias "sadee"
+                      keyPassword "sadee2026"
+                  }
+              }
           '''
 
-          marker = "    compileSdk = flutter.compileSdkVersion\n"
 
-          if marker not in s:
-              raise SystemExit(
-                  "Could not find compileSdk marker"
-              )
+          # --------------------------------------------------------
+          # Insert JVM + signing configuration directly inside
+          # android { }.
+          # --------------------------------------------------------
 
-          s = s.replace(
-              marker,
-              marker + block,
-              1
+          text = (
+              text[:android_close]
+              + "\n"
+              + android_config
+              + "\n"
+              + text[android_close:]
           )
 
-          p.write_text(s)
 
-          print("Java target       : 17")
-          print("Kotlin JVM target : 17")
-          print("Kotlin toolchain  : 17")
+          # --------------------------------------------------------
+          # Recalculate android block because text changed.
+          # --------------------------------------------------------
+
+          android_match = re.search(
+              r'(?m)^[ \t]*android\s*\{',
+              text
+          )
+
+          android_open = text.find(
+              "{",
+              android_match.start()
+          )
+
+          depth = 0
+          android_close = None
+
+          for i in range(android_open, len(text)):
+
+              if text[i] == "{":
+                  depth += 1
+
+              elif text[i] == "}":
+                  depth -= 1
+
+                  if depth == 0:
+                      android_close = i
+                      break
+
+
+          android_body = text[
+              android_open + 1:
+              android_close
+          ]
+
+
+          # --------------------------------------------------------
+          # Find buildTypes INSIDE android block.
+          # --------------------------------------------------------
+
+          build_match = re.search(
+              r'(?m)^[ \t]*buildTypes\s*\{',
+              android_body
+          )
+
+
+          if not build_match:
+
+              # No buildTypes -> create one.
+              build_block = r'''
+              buildTypes {
+                  release {
+                      signingConfig signingConfigs.release
+                  }
+              }
+              '''
+
+              text = (
+                  text[:android_close]
+                  + "\n"
+                  + build_block
+                  + "\n"
+                  + text[android_close:]
+              )
+
+          else:
+
+              # Absolute position of buildTypes opening brace.
+              build_start = (
+                  android_open
+                  + 1
+                  + build_match.start()
+              )
+
+              build_open = text.find(
+                  "{",
+                  build_start
+              )
+
+
+              # Find matching buildTypes close.
+              depth = 0
+              build_close = None
+
+              for i in range(build_open, len(text)):
+
+                  if text[i] == "{":
+                      depth += 1
+
+                  elif text[i] == "}":
+                      depth -= 1
+
+                      if depth == 0:
+                          build_close = i
+                          break
+
+              if build_close is None:
+                  raise SystemExit(
+                      "Could not determine buildTypes block"
+                  )
+
+
+              build_body = text[
+                  build_open + 1:
+                  build_close
+              ]
+
+
+              # ----------------------------------------------------
+              # Find release block.
+              # ----------------------------------------------------
+
+              release_match = re.search(
+                  r'(?m)^[ \t]*release\s*\{',
+                  build_body
+              )
+
+
+              if release_match:
+
+                  release_start = (
+                      build_open
+                      + 1
+                      + release_match.start()
+                  )
+
+                  release_open = text.find(
+                      "{",
+                      release_start
+                  )
+
+                  depth = 0
+                  release_close = None
+
+                  for i in range(
+                      release_open,
+                      len(text)
+                  ):
+
+                      if text[i] == "{":
+                          depth += 1
+
+                      elif text[i] == "}":
+                          depth -= 1
+
+                          if depth == 0:
+                              release_close = i
+                              break
+
+                  if release_close is None:
+                      raise SystemExit(
+                          "Could not determine release block"
+                      )
+
+
+                  release_body = text[
+                      release_open + 1:
+                      release_close
+                  ]
+
+
+                  release_body = re.sub(
+                      r'(?m)^[ \t]*signingConfig.*$',
+                      '',
+                      release_body
+                  )
+
+
+                  release_body = (
+                      "\n"
+                      "            signingConfig signingConfigs.release\n"
+                      + release_body
+                  )
+
+
+                  text = (
+                      text[:release_open + 1]
+                      + release_body
+                      + text[release_close:]
+                  )
+
+              else:
+
+                  # No release block -> create one.
+                  release_block = r'''
+                      release {
+                          signingConfig signingConfigs.release
+                      }
+                  '''
+
+                  text = (
+                      text[:build_open + 1]
+                      + "\n"
+                      + release_block
+                      + text[build_open + 1:]
+                  )
+
+
+          path.write_text(text)
+
+          print("")
+          print("Android Gradle repaired successfully.")
+          print("")
+          print("JAVA:")
+          print("17")
+          print("")
+          print("KOTLIN:")
+          print("17")
+          print("")
+          print("SIGNING:")
+          print("android/app/keystore/sadee-release.jks")
+          print("")
+          print("signingConfigs is INSIDE android { }.")
+          print("buildTypes.release uses signingConfigs.release.")
           PY
 
 
       # ============================================================
-      # 9. CREATE CORRECT KEYSTORE PATH
+      # CREATE KEYSTORE
       # ============================================================
 
       - name: Create Release Keystore
@@ -297,20 +612,6 @@ jobs:
           echo "=============================================="
           echo " CREATING RELEASE KEYSTORE"
           echo "=============================================="
-
-          # IMPORTANT:
-          #
-          # build.gradle uses:
-          #
-          # file("keystore/sadee-release.jks")
-          #
-          # Since build.gradle is inside:
-          #
-          # android/app/
-          #
-          # the correct location is:
-          #
-          # android/app/keystore/sadee-release.jks
 
           mkdir -p android/app/keystore
 
@@ -332,25 +633,17 @@ jobs:
 
           fi
 
-          if [ ! -f "$KEYSTORE" ]; then
-            echo ""
-            echo "ERROR: Keystore was not created."
-            exit 1
-          fi
+          test -f "$KEYSTORE"
 
-          echo ""
-          echo "KEYSTORE:"
+          echo "Keystore created:"
           echo "$KEYSTORE"
 
-          echo ""
-          echo "KEYSTORE EXISTS: YES"
-
 
       # ============================================================
-      # 10. CONFIGURE RELEASE SIGNING
+      # SHOW FINAL GRADLE
       # ============================================================
 
-      - name: Configure Release Signing
+      - name: Verify Gradle Signing
         shell: bash
         run: |
           set -euo pipefail
@@ -358,162 +651,28 @@ jobs:
           cd "$PROJECT_DIR"
 
           echo "=============================================="
-          echo " CONFIGURING RELEASE SIGNING"
-          echo "=============================================="
-
-          python3 - <<'PY'
-          from pathlib import Path
-          import re
-
-          p = Path("android/app/build.gradle")
-
-          s = p.read_text()
-
-          # --------------------------------------------------------
-          # Remove previously injected signingConfigs block.
-          # --------------------------------------------------------
-
-          s = re.sub(
-              r'\n\s*signingConfigs\s*\{.*?\n\s*\}',
-              '',
-              s,
-              flags=re.S
-          )
-
-          # --------------------------------------------------------
-          # Remove previous release signing line.
-          # --------------------------------------------------------
-
-          s = re.sub(
-              r'\n\s*signingConfig\s+signingConfigs\.release',
-              '',
-              s
-          )
-
-          # --------------------------------------------------------
-          # Signing configuration.
-          # --------------------------------------------------------
-
-          signing_block = '''
-              signingConfigs {
-                  release {
-                      storeFile file("keystore/sadee-release.jks")
-                      storePassword "sadee2026"
-                      keyAlias "sadee"
-                      keyPassword "sadee2026"
-                  }
-              }
-
-          '''
-
-          # --------------------------------------------------------
-          # Insert signingConfigs before buildTypes.
-          # --------------------------------------------------------
-
-          if "buildTypes {" in s:
-
-              s = s.replace(
-                  "buildTypes {",
-                  signing_block + "buildTypes {",
-                  1
-              )
-
-          else:
-
-              s += "\n" + signing_block
-
-          # --------------------------------------------------------
-          # Find release build type.
-          # --------------------------------------------------------
-
-          match = re.search(
-              r'(buildTypes\s*\{.*?release\s*\{)',
-              s,
-              flags=re.S
-          )
-
-          if match:
-
-              start = match.end()
-
-              s = (
-                  s[:start]
-                  + '\n            signingConfig signingConfigs.release\n'
-                  + s[start:]
-              )
-
-          else:
-
-              # Fallback: append buildTypes.
-              s += '''
-
-              android {
-                  buildTypes {
-                      release {
-                          signingConfig signingConfigs.release
-                      }
-                  }
-              }
-              '''
-
-          p.write_text(s)
-
-          print("Release signing configured.")
-          print("")
-          print("Keystore:")
-          print("android/app/keystore/sadee-release.jks")
-          print("")
-          print("Alias:")
-          print("sadee")
-          PY
-
-
-      # ============================================================
-      # 11. VERIFY SIGNING CONFIG
-      # ============================================================
-
-      - name: Verify Signing Configuration
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          cd "$PROJECT_DIR"
-
-          echo "=============================================="
-          echo " VERIFYING SIGNING CONFIG"
+          echo " VERIFYING GRADLE"
           echo "=============================================="
 
           test -f android/app/keystore/sadee-release.jks
 
-          grep -q 'keystore/sadee-release.jks' \
+          grep -q \
+            'signingConfigs' \
             android/app/build.gradle
 
-          grep -q 'signingConfigs.release' \
+          grep -q \
+            'sadee-release.jks' \
             android/app/build.gradle
 
-          echo ""
-          echo "Keystore path : OK"
-          echo "Signing config: OK"
+          grep -q \
+            'signingConfigs.release' \
+            android/app/build.gradle
+
+          echo "Gradle signing configuration: OK"
 
 
       # ============================================================
-      # 12. SHOW JAVA VERSION
-      # ============================================================
-
-      - name: Show Java Version
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "=============================================="
-          echo " JAVA VERSION"
-          echo "=============================================="
-
-          java -version
-
-
-      # ============================================================
-      # 13. FLUTTER CLEAN
+      # CLEAN
       # ============================================================
 
       - name: Flutter Clean
@@ -527,7 +686,7 @@ jobs:
 
 
       # ============================================================
-      # 14. PUB GET
+      # PUB GET
       # ============================================================
 
       - name: Flutter Pub Get
@@ -541,7 +700,7 @@ jobs:
 
 
       # ============================================================
-      # 15. DART FORMAT
+      # FORMAT
       # ============================================================
 
       - name: Dart Format
@@ -555,7 +714,7 @@ jobs:
 
 
       # ============================================================
-      # 16. ANALYZE
+      # ANALYZE
       # ============================================================
 
       - name: Flutter Analyze
@@ -571,17 +730,16 @@ jobs:
 
 
       # ============================================================
-      # 17. BUILD USER APK
+      # BUILD USER
       # ============================================================
 
-      - name: Build USER APK
+      - name: Build Signed USER APK
         shell: bash
         run: |
           set -euo pipefail
 
           cd "$PROJECT_DIR"
 
-          echo ""
           echo "=============================================="
           echo " BUILDING SIGNED USER APK"
           echo "=============================================="
@@ -593,17 +751,16 @@ jobs:
 
 
       # ============================================================
-      # 18. BUILD ADMIN APK
+      # BUILD ADMIN
       # ============================================================
 
-      - name: Build ADMIN APK
+      - name: Build Signed ADMIN APK
         shell: bash
         run: |
           set -euo pipefail
 
           cd "$PROJECT_DIR"
 
-          echo ""
           echo "=============================================="
           echo " BUILDING SIGNED ADMIN APK"
           echo "=============================================="
@@ -615,22 +772,18 @@ jobs:
 
 
       # ============================================================
-      # 19. LOCATE APKSIGNER
+      # FIND APKSIGNER
       # ============================================================
 
-      - name: Locate APK Signer
+      - name: Find APK Signer
         shell: bash
         run: |
           set -euo pipefail
 
-          echo "=============================================="
-          echo " LOCATING APKSIGNER"
-          echo "=============================================="
-
           APKSIGNER="$(
             find "$ANDROID_HOME/build-tools" \
               -type f \
-              -name "apksigner" \
+              -name apksigner \
               | sort -V \
               | tail -n 1
           )"
@@ -640,15 +793,14 @@ jobs:
             exit 1
           fi
 
-          echo ""
-          echo "APKSIGNER:"
-          echo "$APKSIGNER"
-
           echo "APKSIGNER=$APKSIGNER" >> "$GITHUB_ENV"
+
+          echo "Using:"
+          echo "$APKSIGNER"
 
 
       # ============================================================
-      # 20. VERIFY USER APK
+      # VERIFY USER
       # ============================================================
 
       - name: Verify USER APK
@@ -658,25 +810,17 @@ jobs:
 
           APK="$PROJECT_DIR/build/app/outputs/flutter-apk/app-user-release.apk"
 
-          echo "=============================================="
-          echo " VERIFYING USER APK"
-          echo "=============================================="
-
-          if [ ! -f "$APK" ]; then
-            echo "ERROR: USER APK not found."
-            exit 1
-          fi
+          test -f "$APK"
 
           "$APKSIGNER" verify \
             --verbose \
             "$APK"
 
-          echo ""
           echo "USER APK SIGNATURE: OK"
 
 
       # ============================================================
-      # 21. VERIFY ADMIN APK
+      # VERIFY ADMIN
       # ============================================================
 
       - name: Verify ADMIN APK
@@ -686,50 +830,39 @@ jobs:
 
           APK="$PROJECT_DIR/build/app/outputs/flutter-apk/app-admin-release.apk"
 
-          echo "=============================================="
-          echo " VERIFYING ADMIN APK"
-          echo "=============================================="
-
-          if [ ! -f "$APK" ]; then
-            echo "ERROR: ADMIN APK not found."
-            exit 1
-          fi
+          test -f "$APK"
 
           "$APKSIGNER" verify \
             --verbose \
             "$APK"
 
-          echo ""
           echo "ADMIN APK SIGNATURE: OK"
 
 
       # ============================================================
-      # 22. APK INFORMATION
+      # SHOW APKs
       # ============================================================
 
-      - name: Show Final APKs
+      - name: Show APK Output
         shell: bash
         run: |
           set -euo pipefail
 
-          APK_DIR="$PROJECT_DIR/build/app/outputs/flutter-apk"
-
-          echo ""
           echo "=============================================="
-          echo " FINAL APK FILES"
+          echo " FINAL APK OUTPUT"
           echo "=============================================="
 
-          find "$APK_DIR" \
+          find "$PROJECT_DIR/build/app/outputs/flutter-apk" \
             -type f \
             -name "*.apk" \
             -exec ls -lh {} \;
 
 
       # ============================================================
-      # 23. CHECK BOTH APKs
+      # CHECK FILES
       # ============================================================
 
-      - name: Check APK Count
+      - name: Check Final APKs
         shell: bash
         run: |
           set -euo pipefail
@@ -740,19 +873,18 @@ jobs:
           test -f "$USER_APK"
           test -f "$ADMIN_APK"
 
-          echo ""
-          echo "USER APK  : EXISTS"
-          echo "ADMIN APK : EXISTS"
+          echo "USER APK  : READY"
+          echo "ADMIN APK : READY"
 
 
       # ============================================================
-      # 24. UPLOAD APKs
+      # UPLOAD
       # ============================================================
 
       - name: Upload Signed APKs
         uses: actions/upload-artifact@v4
         with:
-          name: SADEE-X-DIMA-SIGNED-USER-ADMIN
+          name: SADEE-X-DIMA-REAL-USER-ADMIN-APKS
           path: |
             ${{ env.PROJECT_DIR }}/build/app/outputs/flutter-apk/app-user-release.apk
             ${{ env.PROJECT_DIR }}/build/app/outputs/flutter-apk/app-admin-release.apk
@@ -760,7 +892,7 @@ jobs:
 
 
       # ============================================================
-      # 25. COMPLETE
+      # COMPLETE
       # ============================================================
 
       - name: Build Complete
@@ -771,7 +903,7 @@ jobs:
           echo " SADEE X DIMA BUILD COMPLETE"
           echo "=============================================="
           echo ""
-          echo "USER APK  : SIGNED + VERIFIED"
+          echo "USER  APK : SIGNED + VERIFIED"
           echo "ADMIN APK : SIGNED + VERIFIED"
           echo ""
-          echo "Artifacts are ready."
+          echo "Download both APKs from Actions Artifacts."
