@@ -1,4 +1,4 @@
-name: SADEE X DIMA APK BUILD
+name: SADEE X DIMA - Build User + Admin
 
 on:
   workflow_dispatch:
@@ -11,7 +11,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -19,12 +18,10 @@ jobs:
         shell: bash
         run: |
           set -e
-
-          ZIP_FILE=$(find . -type f -iname "*.zip" ! -path "./.git/*" | head -n 1)
+          ZIP_FILE="$(find . -maxdepth 1 -type f -iname '*.zip' -print -quit)"
 
           if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: ZIP FILE NOT FOUND"
-            echo "Please upload the ZIP file to repository root."
+            echo "ERROR: ZIP file not found in repository root."
             exit 1
           fi
 
@@ -36,50 +33,17 @@ jobs:
         run: |
           set -e
 
-          rm -rf extracted
-          mkdir -p extracted
+          rm -rf source
+          mkdir source
 
-          unzip -o "$ZIP_FILE" -d extracted
+          unzip -o "$ZIP_FILE" -d source
 
-          echo "ZIP EXTRACTED SUCCESSFULLY"
+          test -f source/user/pubspec.yaml
+          test -f source/user/lib/main_user.dart
+          test -f source/admin/pubspec.yaml
+          test -f source/admin/lib/main_admin.dart
 
-      - name: Locate User Project
-        shell: bash
-        run: |
-          set -e
-
-          FILE=$(find extracted -type f -path "*/user/pubspec.yaml" | head -n 1)
-
-          if [ -z "$FILE" ]; then
-            echo "ERROR: user/pubspec.yaml not found"
-            find extracted -name "pubspec.yaml"
-            exit 1
-          fi
-
-          DIR=$(dirname "$FILE")
-
-          echo "USER_DIR=$DIR" >> "$GITHUB_ENV"
-
-          echo "USER PROJECT: $DIR"
-
-      - name: Locate Admin Project
-        shell: bash
-        run: |
-          set -e
-
-          FILE=$(find extracted -type f -path "*/admin/pubspec.yaml" | head -n 1)
-
-          if [ -z "$FILE" ]; then
-            echo "ERROR: admin/pubspec.yaml not found"
-            find extracted -name "pubspec.yaml"
-            exit 1
-          fi
-
-          DIR=$(dirname "$FILE")
-
-          echo "ADMIN_DIR=$DIR" >> "$GITHUB_ENV"
-
-          echo "ADMIN PROJECT: $DIR"
+          echo "ZIP extracted successfully."
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
@@ -94,94 +58,121 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Create User App
+      - name: Create User Project
         shell: bash
         run: |
           set -e
 
           flutter create \
             --org com.sadee.xdima \
-            --project-name sadee_optimizer_user \
+            --project-name sadee_x_dima_user \
+            --platforms android \
             user_build
 
-      - name: Copy User Files
+          rm -rf user_build/lib
+          mkdir -p user_build/lib
+
+          cp source/user/lib/main_user.dart user_build/lib/main_user.dart
+          cp source/user/pubspec.yaml user_build/pubspec.yaml
+
+      - name: Create Admin Project
         shell: bash
         run: |
           set -e
 
-          rm -rf user_build/lib
-          rm -rf user_build/test
+          flutter create \
+            --org com.sadee.xdima \
+            --project-name sadee_x_dima_admin \
+            --platforms android \
+            admin_build
 
-          mkdir -p user_build/lib
+          rm -rf admin_build/lib
+          mkdir -p admin_build/lib
 
-          cp -r "$USER_DIR/lib/." user_build/lib/
-          cp "$USER_DIR/pubspec.yaml" user_build/pubspec.yaml
+          cp source/admin/lib/main_admin.dart admin_build/lib/main_admin.dart
+          cp source/admin/pubspec.yaml admin_build/pubspec.yaml
 
-      - name: User Dependencies
+      - name: User Pub Get
         working-directory: user_build
         run: flutter pub get
 
-      - name: User Format
-        working-directory: user_build
-        run: dart format lib
+      - name: Admin Pub Get
+        working-directory: admin_build
+        run: flutter pub get
 
-      - name: User Analyze
+      - name: Format User
         working-directory: user_build
+        run: dart format lib/main_user.dart
+
+      - name: Format Admin
+        working-directory: admin_build
+        run: dart format lib/main_admin.dart
+
+      - name: Analyze User
+        working-directory: user_build
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+
+      - name: Analyze Admin
+        working-directory: admin_build
         run: flutter analyze --no-fatal-infos --no-fatal-warnings
 
       - name: Build User APK
         working-directory: user_build
-        run: flutter build apk --release
-
-      - name: Create Admin App
-        shell: bash
+        env:
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: |
           set -e
 
-          flutter create \
-            --org com.sadee.xdima \
-            --project-name sadee_optimizer_admin \
-            admin_build
+          if [ -z "$SUPABASE_ANON_KEY" ]; then
+            echo "ERROR: SUPABASE_ANON_KEY secret is missing."
+            exit 1
+          fi
 
-      - name: Copy Admin Files
-        shell: bash
-        run: |
-          set -e
-
-          rm -rf admin_build/lib
-          rm -rf admin_build/test
-
-          mkdir -p admin_build/lib
-
-          cp -r "$ADMIN_DIR/lib/." admin_build/lib/
-          cp "$ADMIN_DIR/pubspec.yaml" admin_build/pubspec.yaml
-
-      - name: Admin Dependencies
-        working-directory: admin_build
-        run: flutter pub get
-
-      - name: Admin Format
-        working-directory: admin_build
-        run: dart format lib
-
-      - name: Admin Analyze
-        working-directory: admin_build
-        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+          flutter build apk \
+            --release \
+            -t lib/main_user.dart \
+            --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY"
 
       - name: Build Admin APK
         working-directory: admin_build
-        run: flutter build apk --release
+        env:
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          set -e
+
+          if [ -z "$SUPABASE_ANON_KEY" ]; then
+            echo "ERROR: SUPABASE_ANON_KEY secret is missing."
+            exit 1
+          fi
+
+          flutter build apk \
+            --release \
+            -t lib/main_admin.dart \
+            --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY"
+
+      - name: Rename APKs
+        shell: bash
+        run: |
+          set -e
+
+          cp \
+            user_build/build/app/outputs/flutter-apk/app-release.apk \
+            user_build/build/app/outputs/flutter-apk/SADEE-X-DIMA-USER.apk
+
+          cp \
+            admin_build/build/app/outputs/flutter-apk/app-release.apk \
+            admin_build/build/app/outputs/flutter-apk/SADEE-X-DIMA-ADMIN.apk
 
       - name: Upload User APK
         uses: actions/upload-artifact@v4
         with:
-          name: SADEE-X-DIMA-USER-APK
-          path: user_build/build/app/outputs/flutter-apk/app-release.apk
+          name: SADEE-X-DIMA-USER
+          path: user_build/build/app/outputs/flutter-apk/SADEE-X-DIMA-USER.apk
           if-no-files-found: error
 
       - name: Upload Admin APK
         uses: actions/upload-artifact@v4
         with:
-          name: SADEE-X-DIMA-ADMIN-APK
-          path: admin_build/build/app/outputs/flutter-apk/app-release.apk
+          name: SADEE-X-DIMA-ADMIN
+          path: admin_build/build/app/outputs/flutter-apk/SADEE-X-DIMA-ADMIN.apk
           if-no-files-found: error
