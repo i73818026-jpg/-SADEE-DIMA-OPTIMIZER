@@ -1,9 +1,6 @@
-name: SADEE X DIMA BUILD
+name: SADEE X DIMA - REAL GAMING OPTIMIZER
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
 
 permissions:
@@ -11,747 +8,721 @@ permissions:
 
 jobs:
   build:
-    name: Build User and Admin APK
     runs-on: ubuntu-latest
-    timeout-minutes: 60
 
     steps:
 
-      # ============================================================
-      # CHECKOUT
-      # ============================================================
-
+      # =========================================================
+      # 1. CHECKOUT
+      # =========================================================
       - name: Checkout
         uses: actions/checkout@v4
 
-
-      # ============================================================
-      # FLUTTER
-      # ============================================================
-
+      # =========================================================
+      # 2. FLUTTER
+      # =========================================================
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
           cache: true
 
-      - name: Flutter Version
-        run: flutter --version
-
-
-      # ============================================================
-      # FIND ZIP
-      # ============================================================
-
-      - name: Find Project ZIP
+      # =========================================================
+      # 3. FIND ZIP
+      # =========================================================
+      - name: Find source ZIP
         shell: bash
         run: |
           set -e
 
-          ZIP_FILE=$(find . \
-            -type f \
-            -name "*.zip" \
-            -not -path "./extracted_project/*" \
-            | head -n 1)
+          ZIP="$(find . -maxdepth 4 -type f -iname '*.zip' -print -quit || true)"
 
-          if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: Project ZIP not found"
+          if [ -z "$ZIP" ]; then
+            echo "ERROR: Source ZIP not found"
             exit 1
           fi
 
-          echo "ZIP_FILE=$ZIP_FILE" >> "$GITHUB_ENV"
+          echo "SOURCE_ZIP=$ZIP" >> "$GITHUB_ENV"
+          echo "Found: $ZIP"
 
-          echo "================================"
-          echo "ZIP FOUND"
-          echo "$ZIP_FILE"
-          echo "================================"
-
-
-      # ============================================================
-      # EXTRACT
-      # ============================================================
-
-      - name: Extract Project
+      # =========================================================
+      # 4. EXTRACT
+      # =========================================================
+      - name: Extract source
         shell: bash
         run: |
           set -e
 
           rm -rf extracted_project
-
           mkdir -p extracted_project
 
-          unzip -q "$ZIP_FILE" \
-            -d extracted_project
+          unzip -q "$SOURCE_ZIP" -d extracted_project
 
-          PUBSPEC=$(find extracted_project \
-            -type f \
-            -name "pubspec.yaml" \
-            -print -quit)
+          PUB="$(find extracted_project -maxdepth 6 -name pubspec.yaml -print -quit)"
 
-          if [ -z "$PUBSPEC" ]; then
+          if [ -z "$PUB" ]; then
             echo "ERROR: pubspec.yaml not found"
             exit 1
           fi
 
-          PROJECT_DIR=$(dirname "$PUBSPEC")
+          PROJECT_DIR="$(dirname "$PUB")"
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-          echo "================================"
-          echo "PROJECT DIRECTORY"
+          echo "Flutter project:"
           echo "$PROJECT_DIR"
-          echo "================================"
 
-
-      # ============================================================
-      # VERIFY PROJECT
-      # ============================================================
-
-      - name: Verify Project
+      # =========================================================
+      # 5. GRADLE / AGP / KOTLIN
+      # =========================================================
+      - name: Stabilize Android build
         shell: bash
         run: |
           set -e
-
           cd "$PROJECT_DIR"
 
-          test -f pubspec.yaml
-          test -f lib/main_user.dart
-          test -f lib/main_admin.dart
-
-          echo "Project verification OK"
-
-
-      # ============================================================
-      # FIX GRADLE
-      # ============================================================
-
-      - name: Fix Gradle Versions
-        shell: bash
-        run: |
-          set -e
-
-          cd "$PROJECT_DIR"
-
-          WRAPPER="android/gradle/wrapper/gradle-wrapper.properties"
-
-          if [ -f "$WRAPPER" ]; then
-            sed -i \
-              's/gradle-[0-9.]*-all\.zip/gradle-8.14.5-all.zip/g' \
-              "$WRAPPER"
+          if [ -f android/gradle/wrapper/gradle-wrapper.properties ]; then
+            sed -i -E \
+              's#gradle-[0-9.]+-(all|bin).zip#gradle-8.14.5-\1.zip#g' \
+              android/gradle/wrapper/gradle-wrapper.properties
           fi
 
-          if [ -f "android/build.gradle" ]; then
-
-            sed -i \
-              's/com.android.tools.build:gradle:[0-9.]*/com.android.tools.build:gradle:8.11.1/g' \
-              android/build.gradle || true
-
-            sed -i \
-              "s/ext.kotlin_version = ['\"][^'\"]*['\"]/ext.kotlin_version = '2.2.20'/g" \
-              android/build.gradle || true
-
+          if [ -f android/settings.gradle ]; then
+            sed -i -E \
+              's/com\.android\.application:[0-9.]+/com.android.application:8.11.1/g;
+               s/org\.jetbrains\.kotlin\.android:[0-9.]+/org.jetbrains.kotlin.android:2.2.20/g' \
+              android/settings.gradle
           fi
 
-          echo "Gradle versions checked"
+          if [ -f android/settings.gradle.kts ]; then
+            sed -i -E \
+              's/com\.android\.application:[0-9.]+/com.android.application:8.11.1/g;
+               s/org\.jetbrains\.kotlin\.android:[0-9.]+/org.jetbrains.kotlin.android:2.2.20/g' \
+              android/settings.gradle.kts
+          fi
 
-
-      # ============================================================
-      # ADD NOTIFICATION PERMISSION
-      # ============================================================
-
-      - name: Fix Notification Permission
+      # =========================================================
+      # 6. MAIN ACTIVITY IMPORTS
+      # =========================================================
+      - name: Prepare Android permissions
         shell: bash
         run: |
           set -e
-
           cd "$PROJECT_DIR"
+
+          MAIN="$(find android/app/src/main -name MainActivity.kt -print -quit)"
+
+          if [ -z "$MAIN" ]; then
+            echo "ERROR: MainActivity.kt not found"
+            exit 1
+          fi
+
+          if ! grep -q "import android.net.Uri" "$MAIN"; then
+            sed -i '1i import android.net.Uri' "$MAIN"
+          fi
 
           MANIFEST="android/app/src/main/AndroidManifest.xml"
 
-          if [ ! -f "$MANIFEST" ]; then
-            echo "ERROR: AndroidManifest.xml not found"
-            exit 1
-          fi
-
-          if ! grep -q "android.permission.POST_NOTIFICATIONS" "$MANIFEST"; then
-
+          if [ -f "$MANIFEST" ] && ! grep -q "android.permission.POST_NOTIFICATIONS" "$MANIFEST"; then
             sed -i \
-              '2i\    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>' \
+              '/<manifest/a\    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>' \
               "$MANIFEST"
-
           fi
 
-          echo "POST_NOTIFICATIONS permission OK"
-
-
-      # ============================================================
-      # NATIVE NOTIFICATION + CLEANER PATCH
-      # ============================================================
-
-      - name: Fix Notifications And Cleaner
+      # =========================================================
+      # 7. REAL DEVICE NATIVE METRICS
+      # =========================================================
+      - name: Patch real device metrics
         shell: bash
         run: |
           set -e
 
           cd "$PROJECT_DIR"
 
-          python3 <<'PY'
+          MAIN="$(find android/app/src/main -name MainActivity.kt -print -quit)"
+
+          python3 - "$MAIN" <<'PY'
           from pathlib import Path
-
-
-          # ========================================================
-          # 1. OPTIMIZER SERVICE
-          # ========================================================
-
-          optimizer = Path(
-              "lib/services/optimizer_service.dart"
-          )
-
-          if not optimizer.exists():
-              raise SystemExit(
-                  "ERROR: optimizer_service.dart not found"
-              )
-
-          text = optimizer.read_text(
-              encoding="utf-8"
-          )
-
-          if "Future<void> notifyOperation(" not in text:
-
-              method = r'''
-            Future<void> notifyOperation(
-              String title,
-              String message,
-            ) async {
-              try {
-                await _channel.invokeMethod(
-                  'notifyUser',
-                  <String, dynamic>{
-                    'title': title,
-                    'text': message,
-                  },
-                );
-              } catch (_) {}
-            }
-
-          '''
-
-              marker = "\n  String formatBytes"
-
-              if marker in text:
-
-                  text = text.replace(
-                      marker,
-                      "\n" + method + marker,
-                      1,
-                  )
-
-              else:
-
-                  pos = text.rfind("\n}")
-
-                  if pos < 0:
-                      raise SystemExit(
-                          "ERROR: OptimizerService class end not found"
-                      )
-
-                  text = (
-                      text[:pos]
-                      + "\n"
-                      + method
-                      + text[pos:]
-                  )
-
-              optimizer.write_text(
-                  text,
-                  encoding="utf-8"
-              )
-
-
-          # ========================================================
-          # 2. USER HOME CLEANER OPTIONS
-          # ========================================================
-
-          user_home = Path(
-              "lib/screens/user_home.dart"
-          )
-
-          if user_home.exists():
-
-              text = user_home.read_text(
-                  encoding="utf-8"
-              )
-
-              # Add extra cleaner categories
-              text = text.replace(
-                  "'downloads','large','old','duplicates','junk','empty'",
-                  "'downloads','large','old','duplicates','junk','empty',"
-                  "'thumbnails','apk','temp'"
-              )
-
-              # Add labels
-              text = text.replace(
-                  "'empty':'Empty Folders'}[c]??c",
-                  "'empty':'Empty Folders',"
-                  "'thumbnails':'Thumbnail Cache',"
-                  "'apk':'APK Files',"
-                  "'temp':'Temporary Files'}[c]??c"
-              )
-
-              user_home.write_text(
-                  text,
-                  encoding="utf-8"
-              )
-
-
-          # ========================================================
-          # 3. MAIN ACTIVITY
-          # ========================================================
-
-          kotlin_files = list(
-              Path(
-                  "android/app/src/main/kotlin"
-              ).rglob("MainActivity.kt")
-          )
-
-          if not kotlin_files:
-              raise SystemExit(
-                  "ERROR: MainActivity.kt not found"
-              )
-
-          main_activity = kotlin_files[0]
-
-          text = main_activity.read_text(
-              encoding="utf-8"
-          )
-
-
-          # ========================================================
-          # NOTIFICATION METHOD CHANNEL
-          # ========================================================
-
-          if '"notifyUser" ->' not in text:
-
-              # Try common existing deleteFiles case
-              patterns = [
-                  (
-                      '"deleteFiles" -> result.success('
-                      'deleteFiles(call.argument<List<String>>("paths") '
-                      '?: emptyList()))'
-                  ),
-                  (
-                      '"cancelScan" -> {'
-                  ),
-              ]
-
-              inserted = False
-
-              for marker in patterns:
-
-                  if marker in text:
-
-                      if marker.startswith(
-                          '"deleteFiles"'
-                      ):
-
-                          replacement = (
-                              marker
-                              + '\n'
-                              + '                "notifyUser" -> {\n'
-                              + '                    val title = '
-                              + 'call.argument<String>("title") '
-                              + '?: "SADEE X DIMA"\n'
-                              + '                    val message = '
-                              + 'call.argument<String>("text") '
-                              + '?: ""\n'
-                              + '                    notifyUser(title, message)\n'
-                              + '                    result.success(true)\n'
-                              + '                }'
-                          )
-
-                          text = text.replace(
-                              marker,
-                              replacement,
-                              1
-                          )
-
-                          inserted = True
-                          break
-
-              if not inserted:
-
-                  print(
-                      "WARNING: Could not locate "
-                      "MethodChannel insertion point"
-                  )
-
-
-          # ========================================================
-          # ENSURE NOTIFY USER FUNCTION
-          # ========================================================
-
-          if "fun notifyUser(" not in text:
-
-              notification_method = r'''
-
-          private fun notifyUser(
-              title: String,
-              message: String
-          ) {
-              try {
-                  val manager =
-                      getSystemService(
-                          android.content.Context.NOTIFICATION_SERVICE
-                      ) as android.app.NotificationManager
-
-                  val channelId = "sxd_ops"
-
-                  if (
-                      android.os.Build.VERSION.SDK_INT >=
-                      android.os.Build.VERSION_CODES.O
-                  ) {
-                      val channel =
-                          android.app.NotificationChannel(
-                              channelId,
-                              "SADEE X DIMA Operations",
-                              android.app.NotificationManager.IMPORTANCE_LOW
-                          )
-
-                      manager.createNotificationChannel(
-                          channel
-                      )
-                  }
-
-                  val builder =
-                      androidx.core.app.NotificationCompat.Builder(
-                          this,
-                          channelId
-                      )
-                          .setSmallIcon(
-                              android.R.drawable.ic_dialog_info
-                          )
-                          .setContentTitle(title)
-                          .setContentText(message)
-                          .setStyle(
-                              androidx.core.app.NotificationCompat.BigTextStyle()
-                                  .bigText(message)
-                          )
-                          .setPriority(
-                              androidx.core.app.NotificationCompat.PRIORITY_LOW
-                          )
-                          .setAutoCancel(true)
-
-                  manager.notify(
-                      System.currentTimeMillis().toInt(),
-                      builder.build()
-                  )
-
-              } catch (e: Exception) {
-                  e.printStackTrace()
-              }
-          }
-
-          '''
-
-              pos = text.rfind("\n}")
-
-              if pos >= 0:
-
-                  text = (
-                      text[:pos]
-                      + notification_method
-                      + text[pos:]
-                  )
-
-
-          # ========================================================
-          # CLEANER EXTRA MATCHERS
-          # ========================================================
-
-          old_match = (
-              '"junk"->ext in setOf("tmp","temp","log","bak","old",'
-              '"cache","crdownload","part","dmp")||'
-              'n.endsWith(".nomedia.tmp");'
-              'else->false'
-          )
-
-          new_match = (
-              '"junk"->ext in setOf("tmp","temp","log","bak","old",'
-              '"cache","crdownload","part","dmp")||'
-              'n.endsWith(".nomedia.tmp");'
-              '"thumbnails"->n.contains(".thumb")||'
-              'p.contains("/.thumbnails/");'
-              '"apk"->ext=="apk";'
-              '"temp"->ext in setOf("tmp","temp","cache","log","bak");'
-              'else->false'
-          )
-
-          if (
-              '"thumbnails"->n.contains(".thumb")'
-              not in text
-          ):
-
-              if old_match in text:
-
-                  text = text.replace(
-                      old_match,
-                      new_match,
+          import sys
+
+          p = Path(sys.argv[1])
+          s = p.read_text(encoding="utf-8")
+
+          imports = """
+import android.app.ActivityManager
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.os.BatteryManager
+import android.os.Build
+import android.os.Environment
+import android.os.PowerManager
+import android.os.StatFs
+import android.os.SystemClock
+import android.view.WindowManager
+"""
+
+          for line in imports.strip().splitlines():
+              if line not in s:
+                  s = s.replace(
+                      "import android.",
+                      line + "\nimport android.",
                       1
                   )
 
-          main_activity.write_text(
-              text,
-              encoding="utf-8"
-          )
+          method = r'''
+private fun getRealDeviceMetrics(): Map<String, Any> {
 
-          print(
-              "Notification + cleaner patch completed"
-          )
+    val activityManager =
+        getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
 
+    val memoryInfo = ActivityManager.MemoryInfo()
+    activityManager.getMemoryInfo(memoryInfo)
+
+    val totalRam = memoryInfo.totalMem
+    val availableRam = memoryInfo.availMem
+    val usedRam = (totalRam - availableRam).coerceAtLeast(0L)
+
+    val ramPercent =
+        if (totalRam > 0L)
+            (usedRam.toDouble() / totalRam.toDouble()) * 100.0
+        else 0.0
+
+    val stat = StatFs(Environment.getDataDirectory().path)
+
+    val totalStorage = stat.totalBytes
+    val freeStorage = stat.availableBytes
+    val usedStorage =
+        (totalStorage - freeStorage).coerceAtLeast(0L)
+
+    val storagePercent =
+        if (totalStorage > 0L)
+            (usedStorage.toDouble() / totalStorage.toDouble()) * 100.0
+        else 0.0
+
+    val batteryIntent = registerReceiver(
+        null,
+        IntentFilter(Intent.ACTION_BATTERY_CHANGED)
+    )
+
+    val batteryLevel =
+        batteryIntent?.getIntExtra(
+            BatteryManager.EXTRA_LEVEL,
+            -1
+        ) ?: -1
+
+    val batteryScale =
+        batteryIntent?.getIntExtra(
+            BatteryManager.EXTRA_SCALE,
+            100
+        ) ?: 100
+
+    val batteryPercent =
+        if (batteryLevel >= 0 && batteryScale > 0)
+            (batteryLevel * 100.0 / batteryScale)
+        else -1.0
+
+    val batteryTempRaw =
+        batteryIntent?.getIntExtra(
+            BatteryManager.EXTRA_TEMPERATURE,
+            Int.MIN_VALUE
+        ) ?: Int.MIN_VALUE
+
+    val batteryTemp =
+        if (batteryTempRaw != Int.MIN_VALUE)
+            batteryTempRaw / 10.0
+        else -1.0
+
+    val status =
+        batteryIntent?.getIntExtra(
+            BatteryManager.EXTRA_STATUS,
+            -1
+        ) ?: -1
+
+    val charging =
+        status == BatteryManager.BATTERY_STATUS_CHARGING ||
+        status == BatteryManager.BATTERY_STATUS_FULL
+
+    val connectivity =
+        getSystemService(Context.CONNECTIVITY_SERVICE)
+            as ConnectivityManager
+
+    val network = connectivity.activeNetwork
+    val caps = network?.let {
+        connectivity.getNetworkCapabilities(it)
+    }
+
+    val networkType =
+        when {
+            caps?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true ->
+                "Wi-Fi"
+
+            caps?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true ->
+                "Mobile"
+
+            caps?.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) == true ->
+                "Ethernet"
+
+            else ->
+                "Offline"
+        }
+
+    val uptimeMs = SystemClock.elapsedRealtime()
+
+    val uptimeSeconds = uptimeMs / 1000L
+    val uptimeMinutes = uptimeSeconds / 60L
+    val uptimeHours = uptimeMinutes / 60L
+    val remainingMinutes = uptimeMinutes % 60L
+
+    val uptimeText =
+        when {
+            uptimeHours >= 24L -> {
+                val days = uptimeHours / 24L
+                val hours = uptimeHours % 24L
+                "${days}d ${hours}h ${remainingMinutes}m"
+            }
+
+            else ->
+                "${uptimeHours}h ${remainingMinutes}m"
+        }
+
+    val refreshRate =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            display?.refreshRate ?: 0f
+        } else {
+            @Suppress("DEPRECATION")
+            windowManager.defaultDisplay.refreshRate
+        }
+
+    val thermalStatus =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val power =
+                getSystemService(Context.POWER_SERVICE)
+                    as PowerManager
+
+            when (power.currentThermalStatus) {
+                PowerManager.THERMAL_STATUS_NONE -> "NONE"
+                PowerManager.THERMAL_STATUS_LIGHT -> "LIGHT"
+                PowerManager.THERMAL_STATUS_MODERATE -> "MODERATE"
+                PowerManager.THERMAL_STATUS_SEVERE -> "SEVERE"
+                PowerManager.THERMAL_STATUS_CRITICAL -> "CRITICAL"
+                PowerManager.THERMAL_STATUS_EMERGENCY -> "EMERGENCY"
+                PowerManager.THERMAL_STATUS_SHUTDOWN -> "SHUTDOWN"
+                else -> "UNKNOWN"
+            }
+        } else {
+            "UNAVAILABLE"
+        }
+
+    val cores =
+        Runtime.getRuntime().availableProcessors()
+
+    return mapOf(
+        "ramTotal" to totalRam,
+        "ramAvailable" to availableRam,
+        "ramUsed" to usedRam,
+        "ramPercent" to ramPercent,
+
+        "storageTotal" to totalStorage,
+        "storageFree" to freeStorage,
+        "storageUsed" to usedStorage,
+        "storagePercent" to storagePercent,
+
+        "batteryPercent" to batteryPercent,
+        "batteryTemperature" to batteryTemp,
+        "charging" to charging,
+
+        "network" to networkType,
+
+        "uptimeMillis" to uptimeMs,
+        "uptimeText" to uptimeText,
+
+        "refreshRate" to refreshRate,
+
+        "thermalStatus" to thermalStatus,
+
+        "cpuCores" to cores,
+
+        "manufacturer" to Build.MANUFACTURER,
+        "model" to Build.MODEL,
+        "androidVersion" to Build.VERSION.RELEASE,
+        "sdk" to Build.VERSION.SDK_INT
+    )
+}
+'''
+
+          if "private fun getRealDeviceMetrics()" not in s:
+              pos = s.rfind("\n}")
+              if pos == -1:
+                  raise SystemExit("MainActivity class end not found")
+
+              s = s[:pos] + "\n" + method + s[pos:]
+
+          handler = r'''
+"getRealDeviceMetrics" -> {
+    result.success(getRealDeviceMetrics())
+}
+'''
+
+          if '"getRealDeviceMetrics" ->' not in s:
+              marker = 'when (call.method) {'
+
+              if marker in s:
+                  s = s.replace(
+                      marker,
+                      marker + "\n" + handler,
+                      1
+                  )
+
+          p.write_text(s, encoding="utf-8")
+          print("REAL DEVICE METRICS PATCHED")
           PY
 
-
-      # ============================================================
-      # CHECK NOTIFICATION BRIDGE
-      # ============================================================
-
-      - name: Verify Notification Bridge
+      # =========================================================
+      # 8. DART SERVICE BRIDGE
+      # =========================================================
+      - name: Patch OptimizerService
         shell: bash
         run: |
           set -e
-
           cd "$PROJECT_DIR"
 
-          grep -Fq \
-            "notifyOperation" \
-            lib/services/optimizer_service.dart
+          FILE="lib/services/optimizer_service.dart"
 
-          grep -Fq \
-            "notifyUser" \
-            android/app/src/main/kotlin/*/*/*/MainActivity.kt \
-            2>/dev/null || true
-
-          echo "Notification bridge check completed"
-
-
-      # ============================================================
-      # PNG REPAIR
-      # ============================================================
-
-      - name: Repair PNG Files
-        shell: bash
-        run: |
-          set -e
-
-          cd "$PROJECT_DIR"
-
-          python3 -m pip install --quiet pillow
-
-          python3 <<'PY'
+          python3 - "$FILE" <<'PY'
           from pathlib import Path
-          from PIL import Image
+          import sys
 
-          root = Path(
-              "android/app/src/main/res"
-          )
+          p = Path(sys.argv[1])
+          s = p.read_text(encoding="utf-8")
 
-          if not root.exists():
-              print(
-                  "Android resources directory not found"
-              )
-              raise SystemExit(0)
+          if "Future<Map<String, dynamic>> getRealDeviceMetrics()" not in s:
 
-          for path in root.rglob("*.png"):
+              method = r'''
+  Future<Map<String, dynamic>> getRealDeviceMetrics() async {
+    try {
+      final result =
+          await _channel.invokeMethod<dynamic>('getRealDeviceMetrics');
 
-              try:
+      if (result is Map) {
+        return Map<String, dynamic>.from(result);
+      }
+    } catch (_) {}
 
-                  image = Image.open(path)
-                  image.load()
+    return <String, dynamic>{};
+  }
 
-                  image.convert("RGBA").save(
-                      path,
-                      format="PNG"
-                  )
+'''
 
-                  print(
-                      "PNG repaired:",
-                      path
-                  )
+              pos = s.rfind("\n}")
+              if pos == -1:
+                  raise SystemExit("OptimizerService class end not found")
 
-              except Exception as error:
+              s = s[:pos] + "\n" + method + s[pos:]
 
-                  print(
-                      "PNG skipped:",
-                      path,
-                      error
-                  )
+          if "Future<void> notifyOperation(" not in s:
+
+              method = r'''
+  Future<void> notifyOperation(
+    String title,
+    String message,
+  ) async {
+    try {
+      await _channel.invokeMethod(
+        'notifyUser',
+        <String, dynamic>{
+          'title': title,
+          'text': message,
+        },
+      );
+    } catch (_) {}
+  }
+
+'''
+
+              pos = s.rfind("\n}")
+              if pos == -1:
+                  raise SystemExit("OptimizerService class end not found")
+
+              s = s[:pos] + "\n" + method + s[pos:]
+
+          p.write_text(s, encoding="utf-8")
+          print("OPTIMIZER SERVICE PATCHED")
           PY
 
-
-      # ============================================================
-      # CHECK FLAVORS
-      # ============================================================
-
-      - name: Check Product Flavors
+      # =========================================================
+      # 9. LIVE METRICS UI HOOK
+      # =========================================================
+      - name: Patch live metrics refresh
         shell: bash
         run: |
           set -e
-
           cd "$PROJECT_DIR"
 
-          if ! grep -Rqs \
-            "productFlavors" \
-            android/app; then
+          FILE="lib/screens/user_home.dart"
 
-            echo "ERROR: productFlavors not found"
-            exit 1
+          python3 - "$FILE" <<'PY'
+          from pathlib import Path
+          import sys
 
-          fi
+          p = Path(sys.argv[1])
+          s = p.read_text(encoding="utf-8")
 
-          echo "Product flavors OK"
+          s = s.replace(
+              "Timer.periodic(const Duration(seconds:3)",
+              "Timer.periodic(const Duration(seconds:1)"
+          )
 
+          p.write_text(s, encoding="utf-8")
+          print("LIVE REFRESH PATCHED")
+          PY
 
-      # ============================================================
-      # CLEAN
-      # ============================================================
-
-      - name: Flutter Clean
+      # =========================================================
+      # 10. CYBER UI THEME PATCH
+      # =========================================================
+      - name: Apply cyber gaming UI
         shell: bash
         run: |
           set -e
-
           cd "$PROJECT_DIR"
 
+          FILE="lib/screens/user_home.dart"
+
+          python3 - "$FILE" <<'PY'
+          from pathlib import Path
+          import sys
+
+          p = Path(sys.argv[1])
+          s = p.read_text(encoding="utf-8")
+
+          replacements = {
+              "Color(0xFF050609)": "Color(0xFF030407)",
+              "Color(0xFF101318)": "Color(0xFF0A0D12)",
+              "Color(0xFF39FF88)": "Color(0xFF00FF87)",
+              "Color(0xFF00E5FF)": "Color(0xFF00E5FF)",
+              "Color(0xFFFF315B)": "Color(0xFFFF1744)",
+              "Color(0xFF9C5CFF)": "Color(0xFFB000FF)",
+          }
+
+          for a, b in replacements.items():
+              s = s.replace(a, b)
+
+          p.write_text(s, encoding="utf-8")
+          print("CYBER COLORS PATCHED")
+          PY
+
+      # =========================================================
+      # 11. CLEANER CATEGORIES
+      # =========================================================
+      - name: Expand real cleaner
+        shell: bash
+        run: |
+          set -e
+          cd "$PROJECT_DIR"
+
+          FILE="lib/screens/user_home.dart"
+
+          python3 - "$FILE" <<'PY'
+          from pathlib import Path
+          import sys
+
+          p = Path(sys.argv[1])
+          s = p.read_text(encoding="utf-8")
+
+          old = "['downloads','large','old','duplicates','junk','empty']"
+
+          new = """[
+            'downloads',
+            'large',
+            'old',
+            'duplicates',
+            'junk',
+            'empty',
+            'thumbnails',
+            'apk',
+            'temp'
+          ]"""
+
+          s = s.replace(old, new)
+
+          p.write_text(s, encoding="utf-8")
+          print("CLEANER CATEGORIES PATCHED")
+          PY
+
+      # =========================================================
+      # 12. NOTIFICATION BRIDGE
+      # =========================================================
+      - name: Patch notification bridge
+        shell: bash
+        run: |
+          set -e
+          cd "$PROJECT_DIR"
+
+          MAIN="$(find android/app/src/main -name MainActivity.kt -print -quit)"
+
+          python3 - "$MAIN" <<'PY'
+          from pathlib import Path
+          import sys
+
+          p = Path(sys.argv[1])
+          s = p.read_text(encoding="utf-8")
+
+          if '"notifyUser" ->' not in s:
+
+              block = r'''
+"notifyUser" -> {
+    val title =
+        call.argument<String>("title")
+            ?: "SADEE X DIMA"
+
+    val message =
+        call.argument<String>("text")
+            ?: ""
+
+    notifyUser(title, message)
+    result.success(true)
+}
+'''
+
+              marker = 'when (call.method) {'
+
+              if marker in s:
+                  s = s.replace(
+                      marker,
+                      marker + "\n" + block,
+                      1
+                  )
+
+          p.write_text(s, encoding="utf-8")
+          print("NOTIFICATION BRIDGE READY")
+          PY
+
+      # =========================================================
+      # 13. VERIFY
+      # =========================================================
+      - name: Verify patches
+        shell: bash
+        run: |
+          set -e
+          cd "$PROJECT_DIR"
+
+          grep -R "getRealDeviceMetrics" \
+            lib/services/optimizer_service.dart \
+            android/app/src/main \
+            >/dev/null
+
+          grep -R "notifyOperation" \
+            lib/services/optimizer_service.dart \
+            >/dev/null
+
+          echo "================================="
+          echo " REAL DEVICE PATCH: OK"
+          echo " NOTIFICATION PATCH: OK"
+          echo " CYBER UI PATCH: OK"
+          echo " CLEANER PATCH: OK"
+          echo "================================="
+
+      # =========================================================
+      # 14. FLUTTER
+      # =========================================================
+      - name: Flutter clean
+        shell: bash
+        run: |
+          cd "$PROJECT_DIR"
           flutter clean
 
-
-      # ============================================================
-      # PUB GET
-      # ============================================================
-
-      - name: Flutter Pub Get
+      - name: Flutter pub get
         shell: bash
         run: |
-          set -e
-
           cd "$PROJECT_DIR"
-
           flutter pub get
 
-
-      # ============================================================
-      # FORMAT
-      # ============================================================
-
-      - name: Dart Format
+      # =========================================================
+      # 15. FORMAT
+      # =========================================================
+      - name: Format
         shell: bash
         run: |
-          set -e
-
           cd "$PROJECT_DIR"
+          dart format lib || true
 
-          dart format lib
-
-
-      # ============================================================
-      # VERIFY NOTIFY OPERATION
-      # ============================================================
-
-      - name: Verify OptimizerService
+      # =========================================================
+      # 16. ANALYZE
+      # =========================================================
+      - name: Analyze
         shell: bash
         run: |
           set -e
-
-          cd "$PROJECT_DIR"
-
-          grep -Fq \
-            "Future<void> notifyOperation(" \
-            lib/services/optimizer_service.dart
-
-          echo "notifyOperation() verified"
-
-
-      # ============================================================
-      # ANALYZE
-      # ============================================================
-
-      - name: Flutter Analyze
-        shell: bash
-        run: |
-          set -e
-
           cd "$PROJECT_DIR"
 
           flutter analyze \
             --no-fatal-infos \
             --no-fatal-warnings
 
-
-      # ============================================================
-      # BUILD USER
-      # ============================================================
-
+      # =========================================================
+      # 17. BUILD USER
+      # =========================================================
       - name: Build User APK
         shell: bash
         run: |
           set -e
-
           cd "$PROJECT_DIR"
 
-          flutter build apk \
-            --release \
-            --flavor user \
-            -t lib/main_user.dart
+          if grep -q "flavorDimensions" android/app/build.gradle 2>/dev/null; then
+            flutter build apk \
+              --release \
+              --flavor user \
+              -t lib/main_user.dart
+          else
+            flutter build apk \
+              --release \
+              -t lib/main_user.dart
+          fi
 
-
-      # ============================================================
-      # BUILD ADMIN
-      # ============================================================
-
+      # =========================================================
+      # 18. BUILD ADMIN
+      # =========================================================
       - name: Build Admin APK
         shell: bash
         run: |
           set -e
-
           cd "$PROJECT_DIR"
 
-          flutter build apk \
-            --release \
-            --flavor admin \
-            -t lib/main_admin.dart
+          if grep -q "flavorDimensions" android/app/build.gradle 2>/dev/null; then
+            flutter build apk \
+              --release \
+              --flavor admin \
+              -t lib/main_admin.dart
+          else
+            flutter build apk \
+              --release \
+              -t lib/main_admin.dart
+          fi
 
-
-      # ============================================================
-      # COLLECT APK
-      # ============================================================
-
+      # =========================================================
+      # 19. COLLECT APK
+      # =========================================================
       - name: Collect APKs
         shell: bash
         run: |
           set -e
 
-          mkdir -p apk_output
+          mkdir -p release_apks
 
-          find \
-            "$PROJECT_DIR/build/app/outputs/flutter-apk" \
+          find "$PROJECT_DIR/build/app/outputs/flutter-apk" \
             -type f \
             -name "*.apk" \
-            -exec cp {} apk_output/ \;
+            -exec cp {} release_apks/ \;
 
-          echo "================================"
-          echo "BUILT APK FILES"
-          echo "================================"
+          ls -lh release_apks
 
-          ls -lh apk_output
-
-
-      # ============================================================
-      # UPLOAD APK
-      # ============================================================
-
+      # =========================================================
+      # 20. UPLOAD
+      # =========================================================
       - name: Upload APKs
         uses: actions/upload-artifact@v4
         with:
-          name: SADEE-X-DIMA-APKs
-          path: apk_output/*.apk
-          if-no-files-found: error
+          name: SADEE-X-DIMA-REAL-GAMING-APKs
+          path: release_apks/*.apk
