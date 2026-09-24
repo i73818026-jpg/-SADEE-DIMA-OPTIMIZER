@@ -1,4 +1,4 @@
-name: SADEE X DIMA - REAL ZIP BUILD
+name: SADEE X DIMA - SIGNED REAL BUILD
 
 on:
   workflow_dispatch:
@@ -44,8 +44,7 @@ jobs:
           set -euo pipefail
 
           echo "=============================================="
-          echo " SADEE X DIMA"
-          echo " SEARCHING PROJECT ZIP"
+          echo " SEARCHING SADEE X DIMA ZIP"
           echo "=============================================="
 
           ZIP_FILE=""
@@ -64,17 +63,12 @@ jobs:
 
           if [ -z "$ZIP_FILE" ]; then
             echo "ERROR: ZIP file not found."
-            echo ""
-            find "$GITHUB_WORKSPACE" \
-              -maxdepth 4 \
-              -type f \
-              -print
             exit 1
           fi
 
           ZIP_FILE="$(realpath "$ZIP_FILE")"
 
-          echo "ZIP FOUND:"
+          echo "ZIP:"
           echo "$ZIP_FILE"
 
           echo "ZIP_FILE=$ZIP_FILE" >> "$GITHUB_ENV"
@@ -89,10 +83,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          echo "=============================================="
-          echo " EXTRACTING ZIP"
-          echo "=============================================="
-
           rm -rf "$GITHUB_WORKSPACE/extracted_project"
 
           mkdir -p "$GITHUB_WORKSPACE/extracted_project"
@@ -100,22 +90,17 @@ jobs:
           unzip -o "$ZIP_FILE" \
             -d "$GITHUB_WORKSPACE/extracted_project"
 
-          echo ""
-          echo "Extraction complete."
+          echo "ZIP extraction complete."
 
 
       # ============================================================
-      # FIND PUBSPEC
+      # LOCATE FLUTTER PROJECT
       # ============================================================
 
       - name: Locate Flutter Project
         shell: bash
         run: |
           set -euo pipefail
-
-          echo "=============================================="
-          echo " LOCATING FLUTTER PROJECT"
-          echo "=============================================="
 
           PUBSPEC_FILE="$(
             find "$GITHUB_WORKSPACE/extracted_project" \
@@ -127,29 +112,28 @@ jobs:
 
           if [ -z "$PUBSPEC_FILE" ]; then
             echo "ERROR: pubspec.yaml not found."
-
             find "$GITHUB_WORKSPACE/extracted_project" \
               -maxdepth 6 \
               -print
-
             exit 1
           fi
 
           PROJECT_DIR="$(dirname "$PUBSPEC_FILE")"
           PROJECT_DIR="$(cd "$PROJECT_DIR" && pwd)"
 
-          echo ""
-          echo "PROJECT_DIR:"
+          echo "=============================================="
+          echo " FLUTTER PROJECT"
           echo "$PROJECT_DIR"
+          echo "=============================================="
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
 
       # ============================================================
-      # VERIFY
+      # VERIFY PROJECT
       # ============================================================
 
-      - name: Verify Flutter Project
+      - name: Verify Project
         shell: bash
         run: |
           set -euo pipefail
@@ -161,7 +145,7 @@ jobs:
           test -f lib/main_admin.dart
           test -f android/app/build.gradle
 
-          echo "Flutter project verified."
+          echo "Project verification: OK"
 
 
       # ============================================================
@@ -177,32 +161,23 @@ jobs:
 
 
       # ============================================================
-      # FORCE ANDROID JVM 17
+      # FIX JAVA/KOTLIN JVM 17
       # ============================================================
 
-      - name: Fix Android Java Kotlin JVM Targets
+      - name: Fix JVM Targets
         shell: bash
         run: |
           set -euo pipefail
 
           cd "$PROJECT_DIR"
 
-          echo "=============================================="
-          echo " FIXING JAVA / KOTLIN JVM TARGET"
-          echo "=============================================="
-
           python3 - <<'PY'
           from pathlib import Path
+          import re
 
           p = Path("android/app/build.gradle")
 
-          if not p.exists():
-              raise SystemExit("android/app/build.gradle not found")
-
           s = p.read_text()
-
-          # Remove old compileOptions block if one exists.
-          import re
 
           s = re.sub(
               r'\n\s*compileOptions\s*\{.*?\n\s*\}',
@@ -218,51 +193,158 @@ jobs:
               flags=re.S
           )
 
-          # Insert Java 17 + Kotlin 17 configuration.
-          marker = '    compileSdk = flutter.compileSdkVersion\n'
-
           block = '''
-          compileOptions {
-              sourceCompatibility JavaVersion.VERSION_17
-              targetCompatibility JavaVersion.VERSION_17
-          }
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
+              }
 
-          kotlinOptions {
-              jvmTarget = "17"
-          }
+              kotlinOptions {
+                  jvmTarget = "17"
+              }
 
-          kotlin {
-              jvmToolchain(17)
-          }
-
+              kotlin {
+                  jvmToolchain(17)
+              }
           '''
+
+          marker = "    compileSdk = flutter.compileSdkVersion\n"
 
           if marker not in s:
               raise SystemExit(
-                  "Could not find compileSdk marker in app/build.gradle"
+                  "compileSdk marker not found"
               )
 
           s = s.replace(
               marker,
-              marker + block,
+              marker + block + "\n",
               1
           )
 
           p.write_text(s)
 
-          print("Java target: 17")
-          print("Kotlin JVM target: 17")
-          print("Kotlin toolchain: 17")
-          print("")
-          print("Updated android/app/build.gradle")
+          print("Java = 17")
+          print("Kotlin = 17")
+          print("Toolchain = 17")
           PY
 
 
       # ============================================================
-      # SHOW GRADLE CONFIG
+      # CREATE RELEASE SIGNING KEY
       # ============================================================
 
-      - name: Show Android Build Configuration
+      - name: Create Release Signing Key
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd "$PROJECT_DIR"
+
+          mkdir -p android/keystore
+
+          KEYSTORE="$PROJECT_DIR/android/keystore/sadee-release.jks"
+
+          if [ ! -f "$KEYSTORE" ]; then
+
+            echo "Creating SADEE release keystore..."
+
+            keytool \
+              -genkeypair \
+              -v \
+              -keystore "$KEYSTORE" \
+              -alias sadee \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -storepass "sadee2026" \
+              -keypass "sadee2026" \
+              -dname "CN=SADEE X DIMA, OU=SADEE, O=SADEE X DIMA, L=Colombo, ST=Western, C=LK"
+
+          fi
+
+          test -f "$KEYSTORE"
+
+          echo "Release keystore created."
+
+
+      # ============================================================
+      # ADD SIGNING CONFIG
+      # ============================================================
+
+      - name: Configure Release Signing
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd "$PROJECT_DIR"
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("android/app/build.gradle")
+
+          s = p.read_text()
+
+          signing = '''
+              signingConfigs {
+                  release {
+                      storeFile file("keystore/sadee-release.jks")
+                      storePassword "sadee2026"
+                      keyAlias "sadee"
+                      keyPassword "sadee2026"
+                  }
+              }
+
+          '''
+
+          marker = "    defaultConfig {"
+
+          if "signingConfigs" not in s:
+              s = s.replace(
+                  marker,
+                  signing + marker,
+                  1
+              )
+
+          # Add release signing to buildTypes.
+          if "buildTypes {" in s:
+
+              if "signingConfig signingConfigs.release" not in s:
+
+                  s = s.replace(
+                      "buildTypes {",
+                      '''buildTypes {
+              release {
+                  signingConfig signingConfigs.release
+              }
+          ''',
+                      1
+                  )
+
+          else:
+
+              s += '''
+
+          android {
+              buildTypes {
+                  release {
+                      signingConfig signingConfigs.release
+                  }
+              }
+          }
+          '''
+
+          p.write_text(s)
+
+          print("Release signing configuration added.")
+          PY
+
+
+      # ============================================================
+      # SHOW BUILD CONFIG
+      # ============================================================
+
+      - name: Show Android Configuration
         shell: bash
         run: |
           set -euo pipefail
@@ -273,15 +355,11 @@ jobs:
           echo " ANDROID BUILD CONFIG"
           echo "=============================================="
 
-          sed -n '1,180p' android/app/build.gradle
-
-          echo ""
-          echo "JAVA:"
-          java -version
+          sed -n '1,220p' android/app/build.gradle
 
 
       # ============================================================
-      # FLUTTER CLEAN
+      # CLEAN
       # ============================================================
 
       - name: Flutter Clean
@@ -339,7 +417,7 @@ jobs:
 
 
       # ============================================================
-      # USER APK
+      # BUILD USER
       # ============================================================
 
       - name: Build USER APK
@@ -350,7 +428,7 @@ jobs:
           cd "$PROJECT_DIR"
 
           echo "=============================================="
-          echo " BUILDING USER APK"
+          echo " BUILDING SIGNED USER APK"
           echo "=============================================="
 
           flutter build apk \
@@ -360,7 +438,7 @@ jobs:
 
 
       # ============================================================
-      # ADMIN APK
+      # BUILD ADMIN
       # ============================================================
 
       - name: Build ADMIN APK
@@ -371,7 +449,7 @@ jobs:
           cd "$PROJECT_DIR"
 
           echo "=============================================="
-          echo " BUILDING ADMIN APK"
+          echo " BUILDING SIGNED ADMIN APK"
           echo "=============================================="
 
           flutter build apk \
@@ -381,51 +459,111 @@ jobs:
 
 
       # ============================================================
-      # CHECK APK
+      # FIND APKSIGNER
       # ============================================================
 
-      - name: Verify APK Files
+      - name: Locate Android APK Signer
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          APKSIGNER="$(
+            find "$ANDROID_HOME/build-tools" \
+              -type f \
+              -name "apksigner" \
+              | sort -V \
+              | tail -n 1
+          )"
+
+          if [ -z "$APKSIGNER" ]; then
+            echo "ERROR: apksigner not found."
+            exit 1
+          fi
+
+          echo "APKSIGNER=$APKSIGNER" >> "$GITHUB_ENV"
+
+          echo "Using:"
+          echo "$APKSIGNER"
+
+
+      # ============================================================
+      # VERIFY APK SIGNATURES
+      # ============================================================
+
+      - name: Verify USER APK
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          APK="$PROJECT_DIR/build/app/outputs/flutter-apk/app-user-release.apk"
+
+          test -f "$APK"
+
+          echo "=============================================="
+          echo " VERIFYING USER APK"
+          echo "=============================================="
+
+          "$APKSIGNER" verify \
+            --verbose \
+            "$APK"
+
+
+      - name: Verify ADMIN APK
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          APK="$PROJECT_DIR/build/app/outputs/flutter-apk/app-admin-release.apk"
+
+          test -f "$APK"
+
+          echo "=============================================="
+          echo " VERIFYING ADMIN APK"
+          echo "=============================================="
+
+          "$APKSIGNER" verify \
+            --verbose \
+            "$APK"
+
+
+      # ============================================================
+      # APK INFORMATION
+      # ============================================================
+
+      - name: Check APK Files
         shell: bash
         run: |
           set -euo pipefail
 
           APK_DIR="$PROJECT_DIR/build/app/outputs/flutter-apk"
 
+          echo ""
           echo "=============================================="
-          echo " GENERATED APK FILES"
+          echo " FINAL APK FILES"
           echo "=============================================="
 
           find "$APK_DIR" \
             -type f \
             -name "*.apk" \
-            -print
-
-          COUNT="$(find "$APK_DIR" -type f -name "*.apk" | wc -l)"
-
-          if [ "$COUNT" -lt 2 ]; then
-            echo "ERROR: Expected USER + ADMIN APK."
-            exit 1
-          fi
-
-          echo ""
-          echo "APK COUNT: $COUNT"
+            -exec ls -lh {} \;
 
 
       # ============================================================
       # UPLOAD
       # ============================================================
 
-      - name: Upload USER + ADMIN APKs
+      - name: Upload Signed APKs
         uses: actions/upload-artifact@v4
         with:
-          name: SADEE-X-DIMA-REAL-APKs
+          name: SADEE-X-DIMA-SIGNED-USER-ADMIN
           path: |
-            ${{ env.PROJECT_DIR }}/build/app/outputs/flutter-apk/*.apk
+            ${{ env.PROJECT_DIR }}/build/app/outputs/flutter-apk/app-user-release.apk
+            ${{ env.PROJECT_DIR }}/build/app/outputs/flutter-apk/app-admin-release.apk
           if-no-files-found: error
 
 
       # ============================================================
-      # DONE
+      # COMPLETE
       # ============================================================
 
       - name: Build Complete
@@ -436,6 +574,6 @@ jobs:
           echo " SADEE X DIMA BUILD COMPLETE"
           echo "=============================================="
           echo ""
-          echo "USER APK  : READY"
-          echo "ADMIN APK : READY"
+          echo "USER APK  : SIGNED + VERIFIED"
+          echo "ADMIN APK : SIGNED + VERIFIED"
           echo ""
