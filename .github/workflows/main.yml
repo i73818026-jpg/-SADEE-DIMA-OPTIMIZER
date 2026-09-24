@@ -84,20 +84,59 @@ jobs:
           file "$LOGO"
           python3 -c "import sys; p=sys.argv[1]; b=open(p,'rb').read(8); assert b==b'\x89PNG\r\n\x1a\n', f'Invalid PNG signature: {b!r}'; print('PNG signature verified')" "$LOGO"
 
-      - name: Verify Native CPU Monitor
+      - name: Repair CPU Reader
         shell: bash
         run: |
           set -euo pipefail
           cd "$PROJECT_DIR"
           MAIN="android/app/src/main/kotlin/com/sadeedima/sadee_x_dima/MainActivity.kt"
           test -f "$MAIN"
-          if grep -Eq 'private fun readCpuUsage\s*\(' "$MAIN"; then
-            echo "CPU MONITOR: native readCpuUsage() already present in ZIP - no replacement needed."
-            grep -n -A3 -B2 'private fun readCpuUsage' "$MAIN" || true
-          else
-            echo "CPU MONITOR: readCpuUsage() not present; leaving source untouched instead of failing the build."
-          fi
-
+          python3 - "$MAIN" <<'PY'
+          import sys
+          p=sys.argv[1]
+          s=open(p).read()
+          start=s.find('    private fun readCpuUsage():Double=')
+          if start < 0:
+              raise SystemExit('readCpuUsage() declaration not found')
+          end=s.find('\n    private fun hasAllFilesAccess', start)
+          if end < 0:
+              raise SystemExit('readCpuUsage() end marker not found')
+          fn = """    private fun readCpuUsage(): Double {
+                  return try {
+            fun read(): LongArray {
+                val line = File("/proc/stat").bufferedReader().useLines { lines ->
+                    lines.firstOrNull { it.startsWith("cpu ") }
+                } ?: return longArrayOf(0L, 0L)
+                val parts = line.trim().split(Regex("\\\\s+"))
+                val user = parts.getOrNull(1)?.toLongOrNull() ?: 0L
+                val nice = parts.getOrNull(2)?.toLongOrNull() ?: 0L
+                val system = parts.getOrNull(3)?.toLongOrNull() ?: 0L
+                val idle = parts.getOrNull(4)?.toLongOrNull() ?: 0L
+                val iowait = parts.getOrNull(5)?.toLongOrNull() ?: 0L
+                val irq = parts.getOrNull(6)?.toLongOrNull() ?: 0L
+                val softIrq = parts.getOrNull(7)?.toLongOrNull() ?: 0L
+                val steal = parts.getOrNull(8)?.toLongOrNull() ?: 0L
+                val total = user + nice + system + idle + iowait + irq + softIrq + steal
+                val busy = total - idle - iowait
+                return longArrayOf(total, busy)
+            }
+            val before = read()
+            Thread.sleep(120L)
+            val after = read()
+            val totalDelta = after[0] - before[0]
+            val busyDelta = after[1] - before[1]
+            if (totalDelta <= 0L) 0.0
+            else ((busyDelta.toDouble() / totalDelta.toDouble()) * 100.0).coerceIn(0.0, 100.0)
+                  } catch (_: Exception) {
+            0.0
+                  }
+              }
+          """
+          s=s[:start]+fn+s[end:]
+          open(p,'w').write(s)
+          print('CPU reader repaired')
+          PY
+          
       - name: Patch Android Toolchain
         shell: bash
         run: |
@@ -231,4 +270,3 @@ jobs:
           echo "Admin APK      : SUCCESS"
           echo "ZIP source      : EXTRACTED FROM GITHUB REPO"
           echo "======================================"
-
