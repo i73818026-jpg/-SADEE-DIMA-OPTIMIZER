@@ -1,16 +1,16 @@
-name: Build SADEE X DIMA from ZIP
+name: Build SADEE X DIMA from uploaded ZIP
 
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches:
+      - main
 
 permissions:
   contents: read
 
 jobs:
   build:
-    name: Extract ZIP and Build User + Admin APK
     runs-on: ubuntu-latest
 
     steps:
@@ -30,80 +30,79 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq unzip
 
-      - name: Find and extract uploaded ZIP
+      - name: Extract ZIP from GitHub repository
         shell: bash
         run: |
           set -euo pipefail
 
           ROOT="$GITHUB_WORKSPACE"
-          EXTRACT="$RUNNER_TEMP/sadee_x_dima_project"
-          rm -rf "$EXTRACT"
-          mkdir -p "$EXTRACT"
+          BUILD_DIR="$RUNNER_TEMP/sadee_x_dima_project"
 
-          echo "Searching repository for SADEE X DIMA ZIP..."
-          ZIP=""
+          rm -rf "$BUILD_DIR"
+          mkdir -p "$BUILD_DIR"
 
-          # Prefer the current V8 ZIP, then any SADEE/DIMA ZIP, then any ZIP.
-          for pattern in \
-            'SADEE_X_DIMA_OPTIMIZER_REAL_CYBER_V8_FULL.zip' \
-            'SADEE_X_DIMA_OPTIMIZER_REAL_CYBER_*.zip' \
-            'SADEE*DIMA*.zip' \
-            '*.zip'; do
-            ZIP="$(find "$ROOT" -type f -name "$pattern" -not -path '*/.git/*' -print -quit || true)"
-            if [ -n "$ZIP" ]; then
-              break
-            fi
-          done
+          echo "Searching GitHub repository for SADEE X DIMA ZIP..."
 
-          if [ -z "$ZIP" ]; then
-            echo "ERROR: No ZIP file found in GitHub repository."
-            echo "Upload the SADEE_X_DIMA_OPTIMIZER_REAL_CYBER_V8_FULL.zip file to the repository root, then run this workflow."
+          ZIP_PATH=""
+
+          ZIP_PATH="$(find "$ROOT" -type f -name 'SADEE_X_DIMA_OPTIMIZER_REAL_CYBER_V8_FULL.zip' -not -path '*/.git/*' -print -quit || true)"
+
+          if [ -z "$ZIP_PATH" ]; then
+            ZIP_PATH="$(find "$ROOT" -type f -iname '*SADEE*DIMA*.zip' -not -path '*/.git/*' -print -quit || true)"
+          fi
+
+          if [ -z "$ZIP_PATH" ]; then
+            ZIP_PATH="$(find "$ROOT" -type f -iname '*.zip' -not -path '*/.git/*' -print -quit || true)"
+          fi
+
+          if [ -z "$ZIP_PATH" ]; then
+            echo "ERROR: No ZIP file found in the GitHub repository."
+            echo "Upload the V8 ZIP to the repository and run the workflow again."
             exit 1
           fi
 
-          echo "ZIP SOURCE: $ZIP"
-          unzip -q -o "$ZIP" -d "$EXTRACT"
+          echo "ZIP FOUND: $ZIP_PATH"
+          echo "Extracting..."
 
-          echo "Extracted top-level files:"
-          find "$EXTRACT" -maxdepth 2 -type f | sort | head -80
+          unzip -q -o "$ZIP_PATH" -d "$BUILD_DIR"
 
-          FOUND="$(find "$EXTRACT" -type f -name pubspec.yaml -not -path '*/.git/*' -print | head -n 1)"
-          if [ -z "$FOUND" ]; then
-            echo "ERROR: pubspec.yaml not found after extracting ZIP."
+          PUBSPEC="$(find "$BUILD_DIR" -type f -name 'pubspec.yaml' -print -quit || true)"
+
+          if [ -z "$PUBSPEC" ]; then
+            echo "ERROR: pubspec.yaml not found after ZIP extraction."
             echo "ZIP contents:"
-            unzip -l "$ZIP" | head -120
+            unzip -l "$ZIP_PATH" | head -150
             exit 1
           fi
 
-          PROJECT_DIR="$(dirname "$FOUND")"
-          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "ZIP_PATH=$ZIP" >> "$GITHUB_ENV"
-          echo "Flutter project extracted to: $PROJECT_DIR"
+          PROJECT_DIR="$(dirname "$PUBSPEC")"
 
-      - name: Verify extracted Flutter project
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "ZIP_PATH=$ZIP_PATH" >> "$GITHUB_ENV"
+
+          echo "Flutter project:"
+          echo "$PROJECT_DIR"
+
+          test -f "$PROJECT_DIR/pubspec.yaml"
+
+      - name: Verify Flutter project
         shell: bash
         run: |
           set -euo pipefail
           cd "$PROJECT_DIR"
 
-          echo "Checking Flutter project: $PROJECT_DIR"
+          echo "Project verification started."
+
           test -f pubspec.yaml
-          test -f lib/main_user.dart
-          test -f lib/main_admin.dart
-          test -f lib/config.dart
-          test -f lib/services/key_service.dart
-          test -f lib/services/optimizer_service.dart
-          test -f lib/screens/license_gate.dart
-          test -f lib/screens/user_home.dart
-          test -f lib/screens/admin_home.dart
+          test -d lib
+          test -d android
           test -f android/app/build.gradle
-          test -f android/settings.gradle
-          test -f android/gradle/wrapper/gradle-wrapper.properties
 
-          echo "SOURCE OK"
-          grep '^name:' pubspec.yaml || true
+          echo "Flutter project OK."
+          echo "pubspec.yaml:"
+          head -20 pubspec.yaml
 
-      - name: Repair logo files if needed
+      - name: Repair invalid logo files
         shell: bash
         run: |
           set -euo pipefail
@@ -114,75 +113,77 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           from PIL import Image
-
-          paths = [
-              Path('assets/sadee_x_dima_logo.png'),
-              Path('android/app/src/main/res/drawable-nodpi/sadee_logo.png'),
+          
+          candidates = [
+              Path("assets/sadee_x_dima_logo.png"),
+              Path("android/app/src/main/res/drawable-nodpi/sadee_logo.png"),
           ]
-
-          for p in paths:
-              if not p.exists():
+          
+          for path in candidates:
+              if not path.exists():
                   continue
-              tmp = p.with_suffix('.fixed.png')
-              im = Image.open(p)
-              im.load()
-              if im.format != 'PNG':
-                  im.convert('RGBA').save(tmp, 'PNG')
-                  tmp.replace(p)
-                  print(f'Converted logo to PNG: {p}')
+          
+              image = Image.open(path)
+              image.load()
+          
+              if image.format != "PNG":
+                  temp = path.with_name(path.name + ".tmp.png")
+                  image.convert("RGBA").save(temp, "PNG")
+                  temp.replace(path)
+                  print("Converted to real PNG:", path)
               else:
-                  print(f'Logo already PNG: {p}')
-
-          for p in paths:
-              if p.exists():
-                  sig = p.read_bytes()[:8]
-                  assert sig == b'\x89PNG\r\n\x1a\n', f'Invalid PNG signature: {p}'
-                  print(f'PNG verified: {p}')
+                  print("Already PNG:", path)
+          
+          for path in candidates:
+              if path.exists():
+                  signature = path.read_bytes()[:8]
+                  if signature != b"\x89PNG\r\n\x1a\n":
+                      raise SystemExit("Invalid PNG signature: " + str(path))
+                  print("PNG verified:", path)
           PY
 
-      - name: Stabilize Android toolchain
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd "$PROJECT_DIR"
-
-          if [ -f android/gradle/wrapper/gradle-wrapper.properties ]; then
-            sed -i 's#distributionUrl=.*#distributionUrl=https\\://services.gradle.org/distributions/gradle-8.14.5-bin.zip#' android/gradle/wrapper/gradle-wrapper.properties
-          fi
-
-          if [ -f android/settings.gradle ]; then
-            sed -i -E 's/(id[[:space:]]+["'"']com\.android\.application["'"'][[:space:]]+version[[:space:]]+["'"'])[^"'"']+(["'"'])/\18.11.1\2/' android/settings.gradle || true
-            sed -i -E 's/(id[[:space:]]+["'"']org\.jetbrains\.kotlin\.android["'"'][[:space:]]+version[[:space:]]+["'"'])[^"'"']+(["'"'])/\12.2.20\2/' android/settings.gradle || true
-          fi
-
       - name: Flutter clean
+        shell: bash
         working-directory: ${{ env.PROJECT_DIR }}
         run: flutter clean
 
       - name: Flutter pub get
+        shell: bash
         working-directory: ${{ env.PROJECT_DIR }}
         run: flutter pub get
 
-      - name: Analyze Dart code
+      - name: Analyze
+        shell: bash
         working-directory: ${{ env.PROJECT_DIR }}
         run: flutter analyze --no-fatal-infos --no-fatal-warnings
 
       - name: Build User APK
+        shell: bash
         working-directory: ${{ env.PROJECT_DIR }}
         run: flutter build apk --release --flavor user -t lib/main_user.dart --android-skip-build-dependency-validation
 
       - name: Build Admin APK
+        shell: bash
         working-directory: ${{ env.PROJECT_DIR }}
         run: flutter build apk --release --flavor admin -t lib/main_admin.dart --android-skip-build-dependency-validation
 
-      - name: Collect APKs
-        working-directory: ${{ env.PROJECT_DIR }}
+      - name: Prepare APK files
         shell: bash
+        working-directory: ${{ env.PROJECT_DIR }}
         run: |
           set -euo pipefail
+
           mkdir -p release
-          cp build/app/outputs/flutter-apk/app-user-release.apk release/SADEE-DIMA-OPTIMIZER-USER.apk
-          cp build/app/outputs/flutter-apk/app-admin-release.apk release/SADEE-DIMA-OPTIMIZER-ADMIN.apk
+
+          USER_APK="build/app/outputs/flutter-apk/app-user-release.apk"
+          ADMIN_APK="build/app/outputs/flutter-apk/app-admin-release.apk"
+
+          test -f "$USER_APK"
+          test -f "$ADMIN_APK"
+
+          cp "$USER_APK" "release/SADEE-DIMA-OPTIMIZER-USER.apk"
+          cp "$ADMIN_APK" "release/SADEE-DIMA-OPTIMIZER-ADMIN.apk"
+
           ls -lh release
 
       - name: Upload APK artifacts
@@ -193,3 +194,4 @@ jobs:
             ${{ env.PROJECT_DIR }}/release/SADEE-DIMA-OPTIMIZER-USER.apk
             ${{ env.PROJECT_DIR }}/release/SADEE-DIMA-OPTIMIZER-ADMIN.apk
           if-no-files-found: error
+
