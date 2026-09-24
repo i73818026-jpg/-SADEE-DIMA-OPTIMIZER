@@ -11,8 +11,80 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout Repository
         uses: actions/checkout@v4
+
+      - name: Find and Extract ZIP
+        shell: bash
+        run: |
+          set -e
+
+          echo "Searching for ZIP..."
+
+          ZIP_FILE=$(find . -type f -name "*.zip" | head -n 1)
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo "❌ ZIP file not found!"
+            echo "Files in repository:"
+            find . -maxdepth 3 -type f | sort
+            exit 1
+          fi
+
+          echo "✅ ZIP found: $ZIP_FILE"
+
+          rm -rf extracted
+          mkdir -p extracted
+
+          unzip -o "$ZIP_FILE" -d extracted
+
+          echo "Extracted files:"
+          find extracted -maxdepth 4 -type f | sort
+
+      - name: Locate User Project
+        shell: bash
+        run: |
+          set -e
+
+          USER_PUBSPEC=$(find extracted -type f -path "*/user/pubspec.yaml" | head -n 1)
+
+          if [ -z "$USER_PUBSPEC" ]; then
+            echo "❌ user/pubspec.yaml not found!"
+
+            echo "Searching all pubspec.yaml files:"
+            find extracted -type f -name "pubspec.yaml" | sort
+
+            exit 1
+          fi
+
+          USER_DIR=$(dirname "$USER_PUBSPEC")
+
+          echo "✅ User project found:"
+          echo "$USER_DIR"
+
+          echo "USER_DIR=$USER_DIR" >> "$GITHUB_ENV"
+
+      - name: Locate Admin Project
+        shell: bash
+        run: |
+          set -e
+
+          ADMIN_PUBSPEC=$(find extracted -type f -path "*/admin/pubspec.yaml" | head -n 1)
+
+          if [ -z "$ADMIN_PUBSPEC" ]; then
+            echo "❌ admin/pubspec.yaml not found!"
+
+            echo "Searching all pubspec.yaml files:"
+            find extracted -type f -name "pubspec.yaml" | sort
+
+            exit 1
+          fi
+
+          ADMIN_DIR=$(dirname "$ADMIN_PUBSPEC")
+
+          echo "✅ Admin project found:"
+          echo "$ADMIN_DIR"
+
+          echo "ADMIN_DIR=$ADMIN_DIR" >> "$GITHUB_ENV"
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
@@ -29,41 +101,65 @@ jobs:
 
       - name: Create User Flutter Project
         run: |
-          flutter create --org com.sadee.xdima --project-name sadee_optimizer_user user_build
-          cp user/pubspec.yaml user_build/pubspec.yaml
+          flutter create \
+            --org com.sadee.xdima \
+            --project-name sadee_optimizer_user \
+            user_build
+
+      - name: Copy User App
+        run: |
           rm -rf user_build/lib
-          cp -r user/lib user_build/lib
+          cp -r "$USER_DIR/lib" user_build/lib
+
+          cp "$USER_DIR/pubspec.yaml" user_build/pubspec.yaml
+
+          echo "✅ User files copied"
 
       - name: Create Admin Flutter Project
         run: |
-          flutter create --org com.sadee.xdima --project-name sadee_optimizer_admin admin_build
-          cp admin/pubspec.yaml admin_build/pubspec.yaml
+          flutter create \
+            --org com.sadee.xdima \
+            --project-name sadee_optimizer_admin \
+            admin_build
+
+      - name: Copy Admin App
+        run: |
           rm -rf admin_build/lib
-          cp -r admin/lib admin_build/lib
+          cp -r "$ADMIN_DIR/lib" admin_build/lib
 
-      - name: Get User Dependencies
+          cp "$ADMIN_DIR/pubspec.yaml" admin_build/pubspec.yaml
+
+          echo "✅ Admin files copied"
+
+      - name: Flutter Pub Get - User
         working-directory: user_build
-        run: flutter pub get
+        run: |
+          flutter pub get
 
-      - name: Get Admin Dependencies
+      - name: Flutter Pub Get - Admin
         working-directory: admin_build
-        run: flutter pub get
+        run: |
+          flutter pub get
 
       - name: Analyze User
         working-directory: user_build
-        run: flutter analyze
+        run: |
+          flutter analyze
 
       - name: Analyze Admin
         working-directory: admin_build
-        run: flutter analyze
+        run: |
+          flutter analyze
 
       - name: Build User APK
         working-directory: user_build
-        run: flutter build apk --release
+        run: |
+          flutter build apk --release
 
       - name: Build Admin APK
         working-directory: admin_build
-        run: flutter build apk --release
+        run: |
+          flutter build apk --release
 
       - name: Upload User APK
         uses: actions/upload-artifact@v4
