@@ -3,18 +3,17 @@ name: Build Sadee X Dima Apps
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
+    branches: [main]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
+    name: Build User + Admin APK
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout Repository
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Setup Flutter
@@ -23,250 +22,74 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Extract Flutter ZIP
+      - name: Locate Flutter project
         shell: bash
         run: |
           set -euo pipefail
-
-          ZIP_FILE="$(find "$GITHUB_WORKSPACE" -maxdepth 4 -type f -iname 'SADEE_X_DIMA_OPTIMIZER_REAL_CYBER_V7.zip' -print -quit || true)"
-          if [ -z "$ZIP_FILE" ]; then
-            ZIP_FILE="$(find "$GITHUB_WORKSPACE" -maxdepth 4 -type f -iname '*.zip' -not -path '*/.git/*' -print -quit || true)"
+          if [ -f "$GITHUB_WORKSPACE/pubspec.yaml" ]; then
+            PROJECT_DIR="$GITHUB_WORKSPACE"
+          else
+            FOUND="$(find "$GITHUB_WORKSPACE" -type f -name pubspec.yaml -not -path '*/.git/*' -print | head -n 1)"
+            [ -n "$FOUND" ] || { echo 'ERROR: pubspec.yaml not found'; exit 1; }
+            PROJECT_DIR="$(dirname "$FOUND")"
           fi
-
-          if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: No ZIP file found."
-            exit 1
-          fi
-
-          rm -rf "$GITHUB_WORKSPACE/extracted_project"
-          mkdir -p "$GITHUB_WORKSPACE/extracted_project"
-          unzip -o "$ZIP_FILE" -d "$GITHUB_WORKSPACE/extracted_project"
-
-          PUBSPEC="$(find "$GITHUB_WORKSPACE/extracted_project" -type f -name 'pubspec.yaml' -print | head -n 1 || true)"
-
-          if [ -z "$PUBSPEC" ]; then
-            echo "ERROR: pubspec.yaml not found inside ZIP."
-            exit 1
-          fi
-
-          PROJECT_DIR="$(dirname "$PUBSPEC")"
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "PROJECT_DIR=$PROJECT_DIR"
+          echo "Flutter project: $PROJECT_DIR"
 
-      - name: Verify Project
+      - name: Verify source
         shell: bash
         run: |
           set -euo pipefail
           cd "$PROJECT_DIR"
-          test -f pubspec.yaml
-          test -f lib/main_user.dart
-          test -f lib/main_admin.dart
-          test -f android/app/build.gradle
-          echo "Project verified."
+          for f in pubspec.yaml lib/main_user.dart lib/main_admin.dart lib/config.dart lib/services/key_service.dart lib/services/optimizer_service.dart lib/screens/license_gate.dart lib/screens/user_home.dart lib/screens/admin_home.dart android/app/build.gradle; do
+            test -f "$f" || { echo "MISSING: $f"; exit 1; }
+          done
 
-      - name: Repair Logo PNG
+      - name: Stabilize Android toolchain
         shell: bash
         run: |
           set -euo pipefail
           cd "$PROJECT_DIR"
+          sed -i 's#distributionUrl=.*#distributionUrl=https\://services.gradle.org/distributions/gradle-8.14.5-bin.zip#' android/gradle/wrapper/gradle-wrapper.properties
+          sed -i 's/id "com.android.application" version "[^"]*"/id "com.android.application" version "8.11.1"/' android/settings.gradle || true
+          sed -i 's/id "org.jetbrains.kotlin.android" version "[^"]*"/id "org.jetbrains.kotlin.android" version "2.2.20"/' android/settings.gradle || true
 
-          LOGO="android/app/src/main/res/drawable-nodpi/sadee_logo.png"
+      - name: Flutter pub get
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: flutter pub get
 
-          if [ ! -f "$LOGO" ]; then
-            echo "ERROR: Logo not found: $LOGO"
-            exit 1
-          fi
+      - name: Format
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: dart format lib
 
-          python3 -m pip install --quiet --disable-pip-version-check --user pillow
-
-          python3 -c "from PIL import Image; import sys, os; p=sys.argv[1]; t=p+'.fixed.png'; i=Image.open(p); i.load(); i.convert('RGBA').save(t,'PNG',optimize=False,compress_level=6); os.replace(t,p); c=Image.open(p); c.load(); assert c.format=='PNG'; print('PNG OK:',c.format,c.size)" "$LOGO"
-
-          file "$LOGO"
-          python3 -c "import sys; p=sys.argv[1]; b=open(p,'rb').read(8); assert b==b'\x89PNG\r\n\x1a\n', f'Invalid PNG signature: {b!r}'; print('PNG signature verified')" "$LOGO"
-
-      - name: Repair CPU Reader
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd "$PROJECT_DIR"
-          MAIN="android/app/src/main/kotlin/com/sadeedima/sadee_x_dima/MainActivity.kt"
-          test -f "$MAIN"
-          python3 - "$MAIN" <<'PY'
-          import sys
-          p=sys.argv[1]
-          s=open(p).read()
-          start=s.find('    private fun readCpuUsage():Double=')
-          if start < 0:
-              raise SystemExit('readCpuUsage() declaration not found')
-          end=s.find('\n    private fun hasAllFilesAccess', start)
-          if end < 0:
-              raise SystemExit('readCpuUsage() end marker not found')
-          fn = """    private fun readCpuUsage(): Double {
-                  return try {
-            fun read(): LongArray {
-                val line = File("/proc/stat").bufferedReader().useLines { lines ->
-                    lines.firstOrNull { it.startsWith("cpu ") }
-                } ?: return longArrayOf(0L, 0L)
-                val parts = line.trim().split(Regex("\\\\s+"))
-                val user = parts.getOrNull(1)?.toLongOrNull() ?: 0L
-                val nice = parts.getOrNull(2)?.toLongOrNull() ?: 0L
-                val system = parts.getOrNull(3)?.toLongOrNull() ?: 0L
-                val idle = parts.getOrNull(4)?.toLongOrNull() ?: 0L
-                val iowait = parts.getOrNull(5)?.toLongOrNull() ?: 0L
-                val irq = parts.getOrNull(6)?.toLongOrNull() ?: 0L
-                val softIrq = parts.getOrNull(7)?.toLongOrNull() ?: 0L
-                val steal = parts.getOrNull(8)?.toLongOrNull() ?: 0L
-                val total = user + nice + system + idle + iowait + irq + softIrq + steal
-                val busy = total - idle - iowait
-                return longArrayOf(total, busy)
-            }
-            val before = read()
-            Thread.sleep(120L)
-            val after = read()
-            val totalDelta = after[0] - before[0]
-            val busyDelta = after[1] - before[1]
-            if (totalDelta <= 0L) 0.0
-            else ((busyDelta.toDouble() / totalDelta.toDouble()) * 100.0).coerceIn(0.0, 100.0)
-                  } catch (_: Exception) {
-            0.0
-                  }
-              }
-          """
-          s=s[:start]+fn+s[end:]
-          open(p,'w').write(s)
-          print('CPU reader repaired')
-          PY
-          
-      - name: Patch Android Toolchain
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd "$PROJECT_DIR"
-
-          if [ -f android/gradle/wrapper/gradle-wrapper.properties ]; then
-            sed -i 's#distributionUrl=.*#distributionUrl=https://services.gradle.org/distributions/gradle-8.14.5-bin.zip#' android/gradle/wrapper/gradle-wrapper.properties
-          fi
-
-          if [ -f android/settings.gradle ]; then
-            sed -i 's/id "com.android.application" version "[^"]*"/id "com.android.application" version "8.11.1"/' android/settings.gradle || true
-            sed -i 's/id "org.jetbrains.kotlin.android" version "[^"]*"/id "org.jetbrains.kotlin.android" version "2.2.20"/' android/settings.gradle || true
-            sed -i 's/id("com.android.application") version "[^"]*"/id("com.android.application") version "8.11.1"/' android/settings.gradle || true
-            sed -i 's/id("org.jetbrains.kotlin.android") version "[^"]*"/id("org.jetbrains.kotlin.android") version "2.2.20"/' android/settings.gradle || true
-          fi
-
-          if [ -f android/settings.gradle.kts ]; then
-            sed -i 's/id("com.android.application") version "[^"]*"/id("com.android.application") version "8.11.1"/' android/settings.gradle.kts || true
-            sed -i 's/id("org.jetbrains.kotlin.android") version "[^"]*"/id("org.jetbrains.kotlin.android") version "2.2.20"/' android/settings.gradle.kts || true
-          fi
-
-      - name: Verify Product Flavors
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd "$PROJECT_DIR"
-
-          BUILD_FILE="android/app/build.gradle"
-
-          grep -Fq "productFlavors" "$BUILD_FILE" || {
-            echo "ERROR: productFlavors not found."
-            exit 1
-          }
-
-          grep -Eq '^[[:space:]]*user[[:space:]]*\{' "$BUILD_FILE" || {
-            echo "ERROR: user flavor not found."
-            exit 1
-          }
-
-          grep -Eq '^[[:space:]]*admin[[:space:]]*\{' "$BUILD_FILE" || {
-            echo "ERROR: admin flavor not found."
-            exit 1
-          }
-
-          echo "Product flavors verified."
-
-      - name: Flutter Clean
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd "$PROJECT_DIR"
-          flutter clean
-
-      - name: Flutter Pub Get
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd "$PROJECT_DIR"
-          flutter pub get
-
-      - name: Flutter Analyze
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd "$PROJECT_DIR"
-          flutter analyze --no-fatal-infos --no-fatal-warnings
+      - name: Analyze
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
 
       - name: Build User APK
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd "$PROJECT_DIR"
-
-          flutter build apk             --release             --flavor user             -t lib/main_user.dart
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: flutter build apk --release --flavor user -t lib/main_user.dart
 
       - name: Build Admin APK
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd "$PROJECT_DIR"
-
-          flutter build apk             --release             --flavor admin             -t lib/main_admin.dart
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: flutter build apk --release --flavor admin -t lib/main_admin.dart
 
       - name: Collect APKs
+        working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
         run: |
           set -euo pipefail
-          cd "$PROJECT_DIR"
-
           mkdir -p release
-
-          USER_APK="build/app/outputs/flutter-apk/app-user-release.apk"
-          ADMIN_APK="build/app/outputs/flutter-apk/app-admin-release.apk"
-
-          test -f "$USER_APK" || {
-            echo "ERROR: User APK not found."
-            find build -type f -name '*.apk' -print || true
-            exit 1
-          }
-
-          test -f "$ADMIN_APK" || {
-            echo "ERROR: Admin APK not found."
-            find build -type f -name '*.apk' -print || true
-            exit 1
-          }
-
-          cp "$USER_APK" release/SADEE-DIMA-OPTIMIZER-USER.apk
-          cp "$ADMIN_APK" release/SADEE-DIMA-OPTIMIZER-ADMIN.apk
-
-          ls -lh release/
+          cp build/app/outputs/flutter-apk/app-user-release.apk release/SADEE-DIMA-OPTIMIZER-USER.apk
+          cp build/app/outputs/flutter-apk/app-admin-release.apk release/SADEE-DIMA-OPTIMIZER-ADMIN.apk
+          ls -lh release
 
       - name: Upload APKs
         uses: actions/upload-artifact@v4
         with:
-          name: SADEE-DIMA-OPTIMIZER-APKs
+          name: SADEE-DIMA-OPTIMIZER-V7-REAL-CYBER
           path: |
             ${{ env.PROJECT_DIR }}/release/SADEE-DIMA-OPTIMIZER-USER.apk
             ${{ env.PROJECT_DIR }}/release/SADEE-DIMA-OPTIMIZER-ADMIN.apk
           if-no-files-found: error
 
-      - name: Build Summary
-        run: |
-          echo "======================================"
-          echo "SADEE X DIMA BUILD COMPLETE"
-          echo "======================================"
-          echo "ZIP extraction : SUCCESS"
-          echo "PNG repair     : SUCCESS"
-          echo "Kotlin patch   : SUCCESS"
-          echo "User APK       : SUCCESS"
-          echo "Admin APK      : SUCCESS"
-          echo "ZIP source      : EXTRACTED FROM GITHUB REPO"
-          echo "======================================"
