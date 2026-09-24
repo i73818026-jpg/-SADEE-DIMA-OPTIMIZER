@@ -16,53 +16,47 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Find ZIP
-        shell: bash
         run: |
           set -e
-
-          ZIP_FILE=$(find . -type f -iname "*.zip" ! -path "./.git/*" | head -n 1)
-
+          ZIP_FILE=$(find . -type f -name "*.zip" ! -path "./.git/*" | head -n 1)
           if [ -z "$ZIP_FILE" ]; then
-            echo "❌ ZIP file not found"
-            find . -maxdepth 3 -type f ! -path "./.git/*" | sort
+            echo "ZIP file not found"
             exit 1
           fi
-
-          echo "✅ ZIP: $ZIP_FILE"
+          echo "Found: $ZIP_FILE"
           echo "ZIP_FILE=$ZIP_FILE" >> "$GITHUB_ENV"
 
       - name: Extract ZIP
-        shell: bash
         run: |
           set -e
-
           rm -rf extracted
-          mkdir -p extracted
-
+          mkdir extracted
           unzip -o "$ZIP_FILE" -d extracted
+          echo "ZIP extracted successfully"
 
-          echo "✅ ZIP extracted"
-
-      - name: Find Projects
-        shell: bash
+      - name: Find User Project
         run: |
           set -e
-
-          USER_DIR=$(find extracted -type f -path "*/user/pubspec.yaml" -exec dirname {} \; | head -n 1)
-          ADMIN_DIR=$(find extracted -type f -path "*/admin/pubspec.yaml" -exec dirname {} \; | head -n 1)
-
-          if [ -z "$USER_DIR" ]; then
-            echo "❌ user project not found"
+          DIR=$(find extracted -type f -path "*/user/pubspec.yaml" -exec dirname {} \; | head -n 1)
+          if [ -z "$DIR" ]; then
+            echo "User project not found"
+            find extracted -name pubspec.yaml
             exit 1
           fi
+          echo "USER_DIR=$DIR" >> "$GITHUB_ENV"
+          echo "User: $DIR"
 
-          if [ -z "$ADMIN_DIR" ]; then
-            echo "❌ admin project not found"
+      - name: Find Admin Project
+        run: |
+          set -e
+          DIR=$(find extracted -type f -path "*/admin/pubspec.yaml" -exec dirname {} \; | head -n 1)
+          if [ -z "$DIR" ]; then
+            echo "Admin project not found"
+            find extracted -name pubspec.yaml
             exit 1
           fi
-
-          echo "USER_DIR=$USER_DIR" >> "$GITHUB_ENV"
-          echo "ADMIN_DIR=$ADMIN_DIR" >> "$GITHUB_ENV"
+          echo "ADMIN_DIR=$DIR" >> "$GITHUB_ENV"
+          echo "Admin: $DIR"
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -77,45 +71,25 @@ jobs:
           channel: stable
           cache: true
 
-      # ==================================================
-      # USER
-      # ==================================================
-
       - name: Create User Project
         run: |
-          flutter create \
-            --org com.sadee.xdima \
-            --project-name sadee_optimizer_user \
-            user_build
+          flutter create --org com.sadee.xdima --project-name sadee_optimizer_user user_build
 
-      - name: Copy User Config
+      - name: Copy User Project
         run: |
+          rm -rf user_build/lib
           rm -rf user_build/test
-
+          cp -r "$USER_DIR/lib" user_build/lib
           cp "$USER_DIR/pubspec.yaml" user_build/pubspec.yaml
-          cp "$USER_DIR/lib/config.dart" user_build/lib/config.dart
 
-      - name: Create Clean User Main
-        shell: bash
+      - name: Fix User Main
         run: |
-          cat > user_build/lib/main.dart <<'DART'
+          set -e
+
+          cat > user_build/lib/main.dart <<'EOF'
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:url_launcher/url_launcher.dart';
-import 'config.dart';
 
-const bg = Color(0xFF070A10);
-const card = Color(0xFF111722);
-const accent = Color(0xFF00E5FF);
-
-Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-
-  await Supabase.initialize(
-    url: supabaseUrl,
-    publishableKey: supabaseAnonKey,
-  );
-
+void main() {
   runApp(const SadeeApp());
 }
 
@@ -126,443 +100,59 @@ class SadeeApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'SADEE X DIMA Optimizer',
-      theme: ThemeData(
-        brightness: Brightness.dark,
-        scaffoldBackgroundColor: bg,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: accent,
-          brightness: Brightness.dark,
-        ),
-        useMaterial3: true,
-      ),
-      home: const LoginPage(),
+      title: 'SADEE X DIMA',
+      theme: ThemeData.dark(),
+      home: const HomePage(),
     );
   }
 }
 
-class LoginPage extends StatefulWidget {
-  const LoginPage({super.key});
-
-  @override
-  State<LoginPage> createState() => _LoginPageState();
-}
-
-class _LoginPageState extends State<LoginPage> {
-  final controller = TextEditingController();
-  bool loading = false;
-
-  Future<void> login() async {
-    final code = controller.text.trim().toUpperCase();
-
-    if (code.isEmpty) {
-      message('Enter your license key.');
-      return;
-    }
-
-    setState(() {
-      loading = true;
-    });
-
-    try {
-      final row = await Supabase.instance.client
-          .from('license_keys')
-          .select()
-          .eq('key_code', code)
-          .maybeSingle();
-
-      if (row == null) {
-        message('License key not found.');
-        return;
-      }
-
-      final status =
-          (row['status'] ?? 'UNUSED').toString().toUpperCase();
-
-      final expires = row['expires_at'] == null
-          ? null
-          : DateTime.tryParse(row['expires_at'].toString());
-
-      final expired =
-          expires != null && expires.isBefore(DateTime.now().toUtc());
-
-      if (status == 'PAUSED') {
-        message('This license is paused.');
-        return;
-      }
-
-      if (status == 'EXPIRED' || expired) {
-        message('This license has expired.');
-        return;
-      }
-
-      if (status == 'UNUSED') {
-        final days = (row['duration_days'] as num).toInt();
-
-        await Supabase.instance.client
-            .from('license_keys')
-            .update({
-          'status': 'ACTIVE',
-          'activated_at': DateTime.now().toUtc().toIso8601String(),
-          'expires_at': days == -1
-              ? null
-              : DateTime.now()
-                  .toUtc()
-                  .add(Duration(days: days))
-                  .toIso8601String(),
-        }).eq('key_code', code);
-      }
-
-      if (!mounted) return;
-
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(
-          builder: (_) => DashboardPage(keyCode: code),
-        ),
-      );
-    } catch (_) {
-      message('Connection error. Check internet and Supabase.');
-    } finally {
-      if (mounted) {
-        setState(() {
-          loading = false;
-        });
-      }
-    }
-  }
-
-  void message(String text) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(text)),
-    );
-  }
-
-  Future<void> buy(String plan, String price) async {
-    final text = Uri.encodeComponent(
-      'Hello SADEE X DIMA, I want to order $plan license ($price).',
-    );
-
-    final uri = Uri.parse(
-      'https://wa.me/$orderWhatsApp?text=$text',
-    );
-
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(
-        uri,
-        mode: LaunchMode.externalApplication,
-      );
-    }
-  }
-
-  Widget priceCard(
-    String title,
-    String price,
-    String subtitle,
-  ) {
-    return Card(
-      color: card,
-      child: ListTile(
-        leading: const Icon(
-          Icons.vpn_key,
-          color: accent,
-        ),
-        title: Text(
-          title,
-          style: const TextStyle(
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        subtitle: Text(subtitle),
-        trailing: TextButton(
-          onPressed: () => buy(title, price),
-          child: Text(
-            'BUY\n$price',
-            textAlign: TextAlign.center,
-          ),
-        ),
-      ),
-    );
-  }
+class HomePage extends StatelessWidget {
+  const HomePage({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.all(20),
-          children: [
-            const SizedBox(height: 35),
-            const Icon(
-              Icons.bolt,
-              color: accent,
-              size: 70,
-            ),
-            const SizedBox(height: 10),
-            const Text(
-              '𝕤𝕒𝕕𝕖𝕖 𝕏 𝕕𝕚𝕞𝕒',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 28,
-                fontWeight: FontWeight.w900,
-              ),
-            ),
-            const Text(
-              'OPTIMIZER',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: accent,
-                letterSpacing: 5,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 35),
-            TextField(
-              controller: controller,
-              textCapitalization: TextCapitalization.characters,
-              decoration: InputDecoration(
-                prefixIcon: const Icon(
-                  Icons.key,
-                  color: accent,
-                ),
-                hintText: 'License / Access Key',
-                filled: true,
-                fillColor: card,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(16),
-                  borderSide: BorderSide.none,
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            SizedBox(
-              height: 52,
-              child: FilledButton(
-                onPressed: loading ? null : login,
-                child: loading
-                    ? const CircularProgressIndicator()
-                    : const Text(
-                        'LOGIN',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-              ),
-            ),
-            const SizedBox(height: 25),
-            const Text(
-              'KEY PRICES',
-              style: TextStyle(
-                color: accent,
-                fontWeight: FontWeight.w900,
-                letterSpacing: 2,
-              ),
-            ),
-            const SizedBox(height: 8),
-            priceCard(
-              '7 DAYS',
-              'Rs. 500',
-              '7 Day License',
-            ),
-            priceCard(
-              '1 MONTH',
-              'Rs. 1,000',
-              '30 Day License',
-            ),
-            priceCard(
-              'LIFETIME',
-              'Rs. 2,200',
-              'Lifetime License',
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class DashboardPage extends StatefulWidget {
-  final String keyCode;
-
-  const DashboardPage({
-    super.key,
-    required this.keyCode,
-  });
-
-  @override
-  State<DashboardPage> createState() => _DashboardPageState();
-}
-
-class _DashboardPageState extends State<DashboardPage> {
-  int index = 0;
-
-  @override
-  Widget build(BuildContext context) {
-    final pages = [
-      const ToolPage(
-        title: 'HOME',
-        icon: Icons.home,
-        items: [
-          'Optimizer Dashboard',
-          'Gaming Boost',
-          'Performance',
-          'SADEE X DIMA LAUNCH',
-        ],
-      ),
-      const ToolPage(
-        title: 'OPTIMIZER',
-        icon: Icons.bolt,
-        items: [
-          'RAM Optimization',
-          'Performance Mode',
-          'Background Apps',
-        ],
-      ),
-      const ToolPage(
-        title: 'GAMING',
-        icon: Icons.sports_esports,
-        items: [
-          'Game Mode',
-          'Game Launcher',
-          'Gaming Tips',
-        ],
-      ),
-      const ToolPage(
-        title: 'PERFORMANCE',
-        icon: Icons.speed,
-        items: [
-          'CPU Status',
-          'RAM Status',
-          'Battery Status',
-          'Storage Status',
-        ],
-      ),
-      const ToolPage(
-        title: 'SETTINGS',
-        icon: Icons.settings,
-        items: [
-          'License Status',
-          'App Version',
-          'About SADEE X DIMA',
-        ],
-      ),
-    ];
-
     return Scaffold(
       appBar: AppBar(
-        title: const Text(
-          'SADEE X DIMA',
-          style: TextStyle(
-            fontWeight: FontWeight.w900,
-          ),
-        ),
-        backgroundColor: bg,
+        title: const Text('SADEE X DIMA'),
       ),
-      body: pages[index],
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: index,
-        onDestinationSelected: (value) {
-          setState(() {
-            index = value;
-          });
-        },
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.home),
-            label: 'Home',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.bolt),
-            label: 'Optimize',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.sports_esports),
-            label: 'Gaming',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.speed),
-            label: 'Performance',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.settings),
-            label: 'Settings',
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class ToolPage extends StatelessWidget {
-  final String title;
-  final IconData icon;
-  final List<String> items;
-
-  const ToolPage({
-    super.key,
-    required this.title,
-    required this.icon,
-    required this.items,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return SafeArea(
-      child: ListView(
-        padding: const EdgeInsets.all(18),
-        children: [
-          Row(
-            children: [
-              Icon(
-                icon,
-                color: accent,
-                size: 30,
-              ),
-              const SizedBox(width: 10),
-              Text(
-                title,
-                style: const TextStyle(
-                  fontSize: 28,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          const Text(
+      body: ListView(
+        padding: const EdgeInsets.all(20),
+        children: const [
+          Text(
             'SADEE X DIMA OPTIMIZER',
             style: TextStyle(
-              color: Colors.white54,
+              fontSize: 26,
+              fontWeight: FontWeight.bold,
             ),
           ),
-          const SizedBox(height: 18),
-          ...items.map(
-            (item) => Card(
-              color: card,
-              child: ListTile(
-                leading: const Icon(
-                  Icons.check_circle_outline,
-                  color: accent,
-                ),
-                title: Text(
-                  item,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                trailing: const Icon(
-                  Icons.chevron_right,
-                ),
-                onTap: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(
-                        '$item selected.',
-                      ),
-                    ),
-                  );
-                },
-              ),
+          SizedBox(height: 20),
+          Card(
+            child: ListTile(
+              leading: Icon(Icons.bolt),
+              title: Text('Optimizer'),
+              subtitle: Text('Performance tools'),
+            ),
+          ),
+          Card(
+            child: ListTile(
+              leading: Icon(Icons.sports_esports),
+              title: Text('Gaming'),
+              subtitle: Text('Gaming mode'),
+            ),
+          ),
+          Card(
+            child: ListTile(
+              leading: Icon(Icons.speed),
+              title: Text('Performance'),
+              subtitle: Text('Device information'),
+            ),
+          ),
+          Card(
+            child: ListTile(
+              leading: Icon(Icons.settings),
+              title: Text('Settings'),
+              subtitle: Text('App settings'),
             ),
           ),
         ],
@@ -570,48 +160,34 @@ class ToolPage extends StatelessWidget {
     );
   }
 }
-DART
+EOF
 
       - name: Build User
         working-directory: user_build
         run: |
-          set -e
           flutter pub get
           dart format lib
           flutter analyze --no-fatal-infos --no-fatal-warnings
           flutter build apk --release
 
-      # ==================================================
-      # ADMIN
-      # ==================================================
-
       - name: Create Admin Project
         run: |
-          flutter create \
-            --org com.sadee.xdima \
-            --project-name sadee_optimizer_admin \
-            admin_build
+          flutter create --org com.sadee.xdima --project-name sadee_optimizer_admin admin_build
 
-      - name: Copy Admin Source
+      - name: Copy Admin Project
         run: |
           rm -rf admin_build/lib
           rm -rf admin_build/test
-
           cp -r "$ADMIN_DIR/lib" admin_build/lib
           cp "$ADMIN_DIR/pubspec.yaml" admin_build/pubspec.yaml
 
       - name: Build Admin
         working-directory: admin_build
         run: |
-          set -e
           flutter pub get
           dart format lib
           flutter analyze --no-fatal-infos --no-fatal-warnings
           flutter build apk --release
-
-      # ==================================================
-      # APK ARTIFACTS
-      # ==================================================
 
       - name: Upload User APK
         uses: actions/upload-artifact@v4
@@ -629,6 +205,6 @@ DART
 
       - name: Complete
         run: |
-          echo "===================================="
           echo "SADEE X DIMA BUILD COMPLETE"
-          echo "===================================="
+          echo "USER APK READY"
+          echo "ADMIN APK READY"
