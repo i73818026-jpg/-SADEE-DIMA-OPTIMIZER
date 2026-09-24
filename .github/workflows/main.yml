@@ -1,4 +1,4 @@
-name: SADEE X DIMA - ZIP BUILD
+name: SADEE X DIMA - REAL ZIP BUILD
 
 on:
   workflow_dispatch:
@@ -16,7 +16,7 @@ jobs:
     steps:
 
       # ============================================================
-      # 1. CHECKOUT
+      # CHECKOUT
       # ============================================================
 
       - name: Checkout Repository
@@ -24,7 +24,18 @@ jobs:
 
 
       # ============================================================
-      # 2. FIND ZIP
+      # JAVA 17
+      # ============================================================
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+
+      # ============================================================
+      # FIND ZIP
       # ============================================================
 
       - name: Find Project ZIP
@@ -34,33 +45,35 @@ jobs:
 
           echo "=============================================="
           echo " SADEE X DIMA"
-          echo " SEARCHING FOR PROJECT ZIP"
+          echo " SEARCHING PROJECT ZIP"
           echo "=============================================="
 
           ZIP_FILE=""
 
-          if [ -f "SADEE_X_DIMA_OPTIMIZER_REAL_USER_ADMIN.zip" ]; then
-            ZIP_FILE="SADEE_X_DIMA_OPTIMIZER_REAL_USER_ADMIN.zip"
+          if [ -f "$GITHUB_WORKSPACE/SADEE_X_DIMA_OPTIMIZER_REAL_USER_ADMIN.zip" ]; then
+            ZIP_FILE="$GITHUB_WORKSPACE/SADEE_X_DIMA_OPTIMIZER_REAL_USER_ADMIN.zip"
           else
-            ZIP_FILE="$(find "$GITHUB_WORKSPACE" \
-              -type f \
-              -iname "*.zip" \
-              -not -path "*/.git/*" \
-              | head -n 1 || true)"
+            ZIP_FILE="$(
+              find "$GITHUB_WORKSPACE" \
+                -type f \
+                -iname "*.zip" \
+                -not -path "*/.git/*" \
+                | head -n 1 || true
+            )"
           fi
 
           if [ -z "$ZIP_FILE" ]; then
+            echo "ERROR: ZIP file not found."
             echo ""
-            echo "ERROR: No ZIP file found."
-            echo ""
-            echo "Files in repository:"
-            find "$GITHUB_WORKSPACE" -maxdepth 3 -type f -print
+            find "$GITHUB_WORKSPACE" \
+              -maxdepth 4 \
+              -type f \
+              -print
             exit 1
           fi
 
           ZIP_FILE="$(realpath "$ZIP_FILE")"
 
-          echo ""
           echo "ZIP FOUND:"
           echo "$ZIP_FILE"
 
@@ -68,16 +81,16 @@ jobs:
 
 
       # ============================================================
-      # 3. EXTRACT ZIP
+      # EXTRACT ZIP
       # ============================================================
 
-      - name: Extract ZIP Project
+      - name: Extract ZIP
         shell: bash
         run: |
           set -euo pipefail
 
           echo "=============================================="
-          echo " EXTRACTING PROJECT ZIP"
+          echo " EXTRACTING ZIP"
           echo "=============================================="
 
           rm -rf "$GITHUB_WORKSPACE/extracted_project"
@@ -88,18 +101,11 @@ jobs:
             -d "$GITHUB_WORKSPACE/extracted_project"
 
           echo ""
-          echo "ZIP extraction completed."
-
-          echo ""
-          echo "Extracted files:"
-          find "$GITHUB_WORKSPACE/extracted_project" \
-            -maxdepth 4 \
-            -type f \
-            | head -200
+          echo "Extraction complete."
 
 
       # ============================================================
-      # 4. FIND REAL FLUTTER PROJECT
+      # FIND PUBSPEC
       # ============================================================
 
       - name: Locate Flutter Project
@@ -120,11 +126,8 @@ jobs:
           )"
 
           if [ -z "$PUBSPEC_FILE" ]; then
+            echo "ERROR: pubspec.yaml not found."
 
-            echo ""
-            echo "ERROR: pubspec.yaml was not found."
-            echo ""
-            echo "ZIP extraction tree:"
             find "$GITHUB_WORKSPACE/extracted_project" \
               -maxdepth 6 \
               -print
@@ -133,95 +136,36 @@ jobs:
           fi
 
           PROJECT_DIR="$(dirname "$PUBSPEC_FILE")"
-
           PROJECT_DIR="$(cd "$PROJECT_DIR" && pwd)"
 
           echo ""
-          echo "PUBSPEC:"
-          echo "$PUBSPEC_FILE"
-
-          echo ""
-          echo "PROJECT DIRECTORY:"
+          echo "PROJECT_DIR:"
           echo "$PROJECT_DIR"
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
 
       # ============================================================
-      # 5. VERIFY PROJECT
+      # VERIFY
       # ============================================================
 
-      - name: Verify Extracted Flutter Project
+      - name: Verify Flutter Project
         shell: bash
         run: |
           set -euo pipefail
 
           cd "$PROJECT_DIR"
 
-          echo "=============================================="
-          echo " VERIFYING FLUTTER PROJECT"
-          echo "=============================================="
+          test -f pubspec.yaml
+          test -f lib/main_user.dart
+          test -f lib/main_admin.dart
+          test -f android/app/build.gradle
 
-          test -f "pubspec.yaml"
-          test -f "lib/main_user.dart"
-          test -f "lib/main_admin.dart"
-          test -f "android/app/build.gradle"
-
-          echo ""
-          echo "Flutter project:"
-          pwd
-
-          echo ""
-          echo "Required files:"
-          echo "  pubspec.yaml       OK"
-          echo "  main_user.dart     OK"
-          echo "  main_admin.dart    OK"
-          echo "  build.gradle       OK"
+          echo "Flutter project verified."
 
 
       # ============================================================
-      # 6. VERIFY LOGO
-      # ============================================================
-
-      - name: Verify SADEE Logo
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          cd "$PROJECT_DIR"
-
-          echo "=============================================="
-          echo " VERIFYING LOGO"
-          echo "=============================================="
-
-          LOGO="assets/sadee_logo.png"
-
-          if [ ! -f "$LOGO" ]; then
-            echo "ERROR: $LOGO not found."
-            exit 1
-          fi
-
-          python3 - <<'PY'
-          from pathlib import Path
-
-          p = Path("assets/sadee_logo.png")
-
-          data = p.read_bytes()
-
-          png_signature = b"\x89PNG\r\n\x1a\n"
-
-          if data[:8] != png_signature:
-              raise SystemExit(
-                  "ERROR: sadee_logo.png is not a valid PNG"
-              )
-
-          print("SADEE logo PNG: OK")
-          print("Size:", len(data), "bytes")
-          PY
-
-
-      # ============================================================
-      # 7. SETUP FLUTTER
+      # FLUTTER
       # ============================================================
 
       - name: Setup Flutter
@@ -233,10 +177,10 @@ jobs:
 
 
       # ============================================================
-      # 8. SHOW PROJECT
+      # FORCE ANDROID JVM 17
       # ============================================================
 
-      - name: Show Project Information
+      - name: Fix Android Java Kotlin JVM Targets
         shell: bash
         run: |
           set -euo pipefail
@@ -244,24 +188,100 @@ jobs:
           cd "$PROJECT_DIR"
 
           echo "=============================================="
-          echo " PROJECT INFORMATION"
+          echo " FIXING JAVA / KOTLIN JVM TARGET"
           echo "=============================================="
 
-          echo ""
-          echo "Flutter:"
-          flutter --version
+          python3 - <<'PY'
+          from pathlib import Path
 
-          echo ""
-          echo "Project:"
-          pwd
+          p = Path("android/app/build.gradle")
 
-          echo ""
-          echo "Dart files:"
-          find lib -type f -name "*.dart" -print
+          if not p.exists():
+              raise SystemExit("android/app/build.gradle not found")
+
+          s = p.read_text()
+
+          # Remove old compileOptions block if one exists.
+          import re
+
+          s = re.sub(
+              r'\n\s*compileOptions\s*\{.*?\n\s*\}',
+              '',
+              s,
+              flags=re.S
+          )
+
+          s = re.sub(
+              r'\n\s*kotlinOptions\s*\{.*?\n\s*\}',
+              '',
+              s,
+              flags=re.S
+          )
+
+          # Insert Java 17 + Kotlin 17 configuration.
+          marker = '    compileSdk = flutter.compileSdkVersion\n'
+
+          block = '''
+          compileOptions {
+              sourceCompatibility JavaVersion.VERSION_17
+              targetCompatibility JavaVersion.VERSION_17
+          }
+
+          kotlinOptions {
+              jvmTarget = "17"
+          }
+
+          kotlin {
+              jvmToolchain(17)
+          }
+
+          '''
+
+          if marker not in s:
+              raise SystemExit(
+                  "Could not find compileSdk marker in app/build.gradle"
+              )
+
+          s = s.replace(
+              marker,
+              marker + block,
+              1
+          )
+
+          p.write_text(s)
+
+          print("Java target: 17")
+          print("Kotlin JVM target: 17")
+          print("Kotlin toolchain: 17")
+          print("")
+          print("Updated android/app/build.gradle")
+          PY
 
 
       # ============================================================
-      # 9. FLUTTER CLEAN
+      # SHOW GRADLE CONFIG
+      # ============================================================
+
+      - name: Show Android Build Configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd "$PROJECT_DIR"
+
+          echo "=============================================="
+          echo " ANDROID BUILD CONFIG"
+          echo "=============================================="
+
+          sed -n '1,180p' android/app/build.gradle
+
+          echo ""
+          echo "JAVA:"
+          java -version
+
+
+      # ============================================================
+      # FLUTTER CLEAN
       # ============================================================
 
       - name: Flutter Clean
@@ -275,7 +295,7 @@ jobs:
 
 
       # ============================================================
-      # 10. PUB GET
+      # PUB GET
       # ============================================================
 
       - name: Flutter Pub Get
@@ -289,7 +309,7 @@ jobs:
 
 
       # ============================================================
-      # 11. FORMAT
+      # FORMAT
       # ============================================================
 
       - name: Dart Format
@@ -303,7 +323,7 @@ jobs:
 
 
       # ============================================================
-      # 12. ANALYZE
+      # ANALYZE
       # ============================================================
 
       - name: Flutter Analyze
@@ -319,7 +339,7 @@ jobs:
 
 
       # ============================================================
-      # 13. BUILD USER APK
+      # USER APK
       # ============================================================
 
       - name: Build USER APK
@@ -340,7 +360,7 @@ jobs:
 
 
       # ============================================================
-      # 14. BUILD ADMIN APK
+      # ADMIN APK
       # ============================================================
 
       - name: Build ADMIN APK
@@ -361,49 +381,54 @@ jobs:
 
 
       # ============================================================
-      # 15. FIND APK
+      # CHECK APK
       # ============================================================
 
-      - name: Find Generated APKs
+      - name: Verify APK Files
         shell: bash
         run: |
           set -euo pipefail
 
-          echo "=============================================="
-          echo " APK OUTPUT"
-          echo "=============================================="
-
           APK_DIR="$PROJECT_DIR/build/app/outputs/flutter-apk"
 
-          if [ ! -d "$APK_DIR" ]; then
-            echo "ERROR: APK output directory not found."
-            exit 1
-          fi
+          echo "=============================================="
+          echo " GENERATED APK FILES"
+          echo "=============================================="
 
           find "$APK_DIR" \
             -type f \
             -name "*.apk" \
             -print
 
+          COUNT="$(find "$APK_DIR" -type f -name "*.apk" | wc -l)"
+
+          if [ "$COUNT" -lt 2 ]; then
+            echo "ERROR: Expected USER + ADMIN APK."
+            exit 1
+          fi
+
+          echo ""
+          echo "APK COUNT: $COUNT"
+
 
       # ============================================================
-      # 16. UPLOAD APKs
+      # UPLOAD
       # ============================================================
 
       - name: Upload USER + ADMIN APKs
         uses: actions/upload-artifact@v4
         with:
-          name: SADEE-X-DIMA-USER-ADMIN-APKs
+          name: SADEE-X-DIMA-REAL-APKs
           path: |
             ${{ env.PROJECT_DIR }}/build/app/outputs/flutter-apk/*.apk
           if-no-files-found: error
 
 
       # ============================================================
-      # 17. BUILD SUMMARY
+      # DONE
       # ============================================================
 
-      - name: Build Summary
+      - name: Build Complete
         shell: bash
         run: |
           echo ""
@@ -411,5 +436,6 @@ jobs:
           echo " SADEE X DIMA BUILD COMPLETE"
           echo "=============================================="
           echo ""
-          echo "USER APK + ADMIN APK uploaded as artifact."
+          echo "USER APK  : READY"
+          echo "ADMIN APK : READY"
           echo ""
