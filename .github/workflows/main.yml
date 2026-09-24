@@ -1,4 +1,4 @@
-name: Build Sadee X Dima Apps
+name: Build SADEE X DIMA from ZIP
 
 on:
   workflow_dispatch:
@@ -6,12 +6,13 @@ on:
     branches: [main]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
-    name: Build User + Admin APK
+    name: Extract ZIP and Build User + Admin APK
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -22,57 +23,157 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Locate Flutter project
+      - name: Install ZIP tools
         shell: bash
         run: |
           set -euo pipefail
-          if [ -f "$GITHUB_WORKSPACE/pubspec.yaml" ]; then
-            PROJECT_DIR="$GITHUB_WORKSPACE"
-          else
-            FOUND="$(find "$GITHUB_WORKSPACE" -type f -name pubspec.yaml -not -path '*/.git/*' -print | head -n 1)"
-            [ -n "$FOUND" ] || { echo 'ERROR: pubspec.yaml not found'; exit 1; }
-            PROJECT_DIR="$(dirname "$FOUND")"
-          fi
-          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "Flutter project: $PROJECT_DIR"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq unzip
 
-      - name: Verify source
+      - name: Find and extract uploaded ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ROOT="$GITHUB_WORKSPACE"
+          EXTRACT="$RUNNER_TEMP/sadee_x_dima_project"
+          rm -rf "$EXTRACT"
+          mkdir -p "$EXTRACT"
+
+          echo "Searching repository for SADEE X DIMA ZIP..."
+          ZIP=""
+
+          # Prefer the current V8 ZIP, then any SADEE/DIMA ZIP, then any ZIP.
+          for pattern in \
+            'SADEE_X_DIMA_OPTIMIZER_REAL_CYBER_V8_FULL.zip' \
+            'SADEE_X_DIMA_OPTIMIZER_REAL_CYBER_*.zip' \
+            'SADEE*DIMA*.zip' \
+            '*.zip'; do
+            ZIP="$(find "$ROOT" -type f -name "$pattern" -not -path '*/.git/*' -print -quit || true)"
+            if [ -n "$ZIP" ]; then
+              break
+            fi
+          done
+
+          if [ -z "$ZIP" ]; then
+            echo "ERROR: No ZIP file found in GitHub repository."
+            echo "Upload the SADEE_X_DIMA_OPTIMIZER_REAL_CYBER_V8_FULL.zip file to the repository root, then run this workflow."
+            exit 1
+          fi
+
+          echo "ZIP SOURCE: $ZIP"
+          unzip -q -o "$ZIP" -d "$EXTRACT"
+
+          echo "Extracted top-level files:"
+          find "$EXTRACT" -maxdepth 2 -type f | sort | head -80
+
+          FOUND="$(find "$EXTRACT" -type f -name pubspec.yaml -not -path '*/.git/*' -print | head -n 1)"
+          if [ -z "$FOUND" ]; then
+            echo "ERROR: pubspec.yaml not found after extracting ZIP."
+            echo "ZIP contents:"
+            unzip -l "$ZIP" | head -120
+            exit 1
+          fi
+
+          PROJECT_DIR="$(dirname "$FOUND")"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "ZIP_PATH=$ZIP" >> "$GITHUB_ENV"
+          echo "Flutter project extracted to: $PROJECT_DIR"
+
+      - name: Verify extracted Flutter project
         shell: bash
         run: |
           set -euo pipefail
           cd "$PROJECT_DIR"
-          for f in pubspec.yaml lib/main_user.dart lib/main_admin.dart lib/config.dart lib/services/key_service.dart lib/services/optimizer_service.dart lib/screens/license_gate.dart lib/screens/user_home.dart lib/screens/admin_home.dart android/app/build.gradle; do
-            test -f "$f" || { echo "MISSING: $f"; exit 1; }
-          done
+
+          echo "Checking Flutter project: $PROJECT_DIR"
+          test -f pubspec.yaml
+          test -f lib/main_user.dart
+          test -f lib/main_admin.dart
+          test -f lib/config.dart
+          test -f lib/services/key_service.dart
+          test -f lib/services/optimizer_service.dart
+          test -f lib/screens/license_gate.dart
+          test -f lib/screens/user_home.dart
+          test -f lib/screens/admin_home.dart
+          test -f android/app/build.gradle
+          test -f android/settings.gradle
+          test -f android/gradle/wrapper/gradle-wrapper.properties
+
+          echo "SOURCE OK"
+          grep '^name:' pubspec.yaml || true
+
+      - name: Repair logo files if needed
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$PROJECT_DIR"
+
+          python3 -m pip install --quiet --disable-pip-version-check --user pillow
+
+          python3 - <<'PY'
+          from pathlib import Path
+          from PIL import Image
+
+          paths = [
+              Path('assets/sadee_x_dima_logo.png'),
+              Path('android/app/src/main/res/drawable-nodpi/sadee_logo.png'),
+          ]
+
+          for p in paths:
+              if not p.exists():
+                  continue
+              tmp = p.with_suffix('.fixed.png')
+              im = Image.open(p)
+              im.load()
+              if im.format != 'PNG':
+                  im.convert('RGBA').save(tmp, 'PNG')
+                  tmp.replace(p)
+                  print(f'Converted logo to PNG: {p}')
+              else:
+                  print(f'Logo already PNG: {p}')
+
+          for p in paths:
+              if p.exists():
+                  sig = p.read_bytes()[:8]
+                  assert sig == b'\x89PNG\r\n\x1a\n', f'Invalid PNG signature: {p}'
+                  print(f'PNG verified: {p}')
+          PY
 
       - name: Stabilize Android toolchain
         shell: bash
         run: |
           set -euo pipefail
           cd "$PROJECT_DIR"
-          sed -i 's#distributionUrl=.*#distributionUrl=https\://services.gradle.org/distributions/gradle-8.14.5-bin.zip#' android/gradle/wrapper/gradle-wrapper.properties
-          sed -i 's/id "com.android.application" version "[^"]*"/id "com.android.application" version "8.11.1"/' android/settings.gradle || true
-          sed -i 's/id "org.jetbrains.kotlin.android" version "[^"]*"/id "org.jetbrains.kotlin.android" version "2.2.20"/' android/settings.gradle || true
+
+          if [ -f android/gradle/wrapper/gradle-wrapper.properties ]; then
+            sed -i 's#distributionUrl=.*#distributionUrl=https\\://services.gradle.org/distributions/gradle-8.14.5-bin.zip#' android/gradle/wrapper/gradle-wrapper.properties
+          fi
+
+          if [ -f android/settings.gradle ]; then
+            sed -i -E 's/(id[[:space:]]+["'"']com\.android\.application["'"'][[:space:]]+version[[:space:]]+["'"'])[^"'"']+(["'"'])/\18.11.1\2/' android/settings.gradle || true
+            sed -i -E 's/(id[[:space:]]+["'"']org\.jetbrains\.kotlin\.android["'"'][[:space:]]+version[[:space:]]+["'"'])[^"'"']+(["'"'])/\12.2.20\2/' android/settings.gradle || true
+          fi
+
+      - name: Flutter clean
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: flutter clean
 
       - name: Flutter pub get
         working-directory: ${{ env.PROJECT_DIR }}
         run: flutter pub get
 
-      - name: Format
-        working-directory: ${{ env.PROJECT_DIR }}
-        run: dart format lib
-
-      - name: Analyze
+      - name: Analyze Dart code
         working-directory: ${{ env.PROJECT_DIR }}
         run: flutter analyze --no-fatal-infos --no-fatal-warnings
 
       - name: Build User APK
         working-directory: ${{ env.PROJECT_DIR }}
-        run: flutter build apk --release --flavor user -t lib/main_user.dart
+        run: flutter build apk --release --flavor user -t lib/main_user.dart --android-skip-build-dependency-validation
 
       - name: Build Admin APK
         working-directory: ${{ env.PROJECT_DIR }}
-        run: flutter build apk --release --flavor admin -t lib/main_admin.dart
+        run: flutter build apk --release --flavor admin -t lib/main_admin.dart --android-skip-build-dependency-validation
 
       - name: Collect APKs
         working-directory: ${{ env.PROJECT_DIR }}
@@ -84,12 +185,11 @@ jobs:
           cp build/app/outputs/flutter-apk/app-admin-release.apk release/SADEE-DIMA-OPTIMIZER-ADMIN.apk
           ls -lh release
 
-      - name: Upload APKs
+      - name: Upload APK artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: SADEE-DIMA-OPTIMIZER-V7-REAL-CYBER
+          name: SADEE-DIMA-OPTIMIZER-REAL-CYBER
           path: |
             ${{ env.PROJECT_DIR }}/release/SADEE-DIMA-OPTIMIZER-USER.apk
             ${{ env.PROJECT_DIR }}/release/SADEE-DIMA-OPTIMIZER-ADMIN.apk
           if-no-files-found: error
-
