@@ -1,546 +1,160 @@
-      - name: Fix Admin Main
-        working-directory: admin_build
+name: SADEE X DIMA APK BUILD
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Find ZIP
+        shell: bash
         run: |
-          python3 - <<'PY'
-          from pathlib import Path
+          set -e
 
-          p = Path("lib/main.dart")
+          ZIP_FILE=$(find . -type f -iname "*.zip" ! -path "./.git/*" | head -n 1)
 
-          code = r'''
-          import 'package:flutter/material.dart';
-          import 'package:supabase_flutter/supabase_flutter.dart';
-          import 'config.dart';
+          if [ -z "$ZIP_FILE" ]; then
+            echo "ERROR: ZIP FILE NOT FOUND"
+            echo "Please upload the ZIP file to repository root."
+            exit 1
+          fi
 
-          Future<void> main() async {
-            WidgetsFlutterBinding.ensureInitialized();
+          echo "ZIP FOUND: $ZIP_FILE"
+          echo "ZIP_FILE=$ZIP_FILE" >> "$GITHUB_ENV"
 
-            await Supabase.initialize(
-              url: supabaseUrl,
-              publishableKey: supabaseAnonKey,
-            );
+      - name: Extract ZIP
+        shell: bash
+        run: |
+          set -e
 
-            runApp(const AdminApp());
-          }
+          rm -rf extracted
+          mkdir -p extracted
 
-          class AdminApp extends StatelessWidget {
-            const AdminApp({super.key});
+          unzip -o "$ZIP_FILE" -d extracted
 
-            @override
-            Widget build(BuildContext context) {
-              return MaterialApp(
-                debugShowCheckedModeBanner: false,
-                title: 'SADEE X DIMA ADMIN',
-                theme: ThemeData.dark(useMaterial3: true),
-                home: const AdminLogin(),
-              );
-            }
-          }
+          echo "ZIP EXTRACTED SUCCESSFULLY"
 
-          class AdminLogin extends StatefulWidget {
-            const AdminLogin({super.key});
+      - name: Locate User Project
+        shell: bash
+        run: |
+          set -e
 
-            @override
-            State<AdminLogin> createState() => _AdminLoginState();
-          }
+          FILE=$(find extracted -type f -path "*/user/pubspec.yaml" | head -n 1)
 
-          class _AdminLoginState extends State<AdminLogin> {
-            final pinController = TextEditingController();
-            bool loading = false;
+          if [ -z "$FILE" ]; then
+            echo "ERROR: user/pubspec.yaml not found"
+            find extracted -name "pubspec.yaml"
+            exit 1
+          fi
 
-            void login() {
-              if (pinController.text.trim() == 'SADEE2026') {
-                Navigator.pushReplacement(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => const AdminHome(),
-                  ),
-                );
-              } else {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Wrong Admin PIN'),
-                  ),
-                );
-              }
-            }
+          DIR=$(dirname "$FILE")
 
-            @override
-            Widget build(BuildContext context) {
-              return Scaffold(
-                body: SafeArea(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Center(
-                      child: SingleChildScrollView(
-                        child: Column(
-                          children: [
-                            const Icon(
-                              Icons.admin_panel_settings,
-                              size: 80,
-                              color: Colors.cyan,
-                            ),
-                            const SizedBox(height: 20),
-                            const Text(
-                              'SADEE X DIMA',
-                              style: TextStyle(
-                                fontSize: 28,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            const Text(
-                              'ADMIN PANEL',
-                              style: TextStyle(
-                                color: Colors.cyan,
-                                letterSpacing: 3,
-                              ),
-                            ),
-                            const SizedBox(height: 40),
-                            TextField(
-                              controller: pinController,
-                              obscureText: true,
-                              decoration: const InputDecoration(
-                                labelText: 'Admin PIN',
-                                prefixIcon: Icon(Icons.lock),
-                                border: OutlineInputBorder(),
-                              ),
-                            ),
-                            const SizedBox(height: 18),
-                            SizedBox(
-                              width: double.infinity,
-                              height: 52,
-                              child: FilledButton(
-                                onPressed: loading ? null : login,
-                                child: const Text('LOGIN'),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              );
-            }
-          }
+          echo "USER_DIR=$DIR" >> "$GITHUB_ENV"
 
-          class AdminHome extends StatefulWidget {
-            const AdminHome({super.key});
+          echo "USER PROJECT: $DIR"
 
-            @override
-            State<AdminHome> createState() => _AdminHomeState();
-          }
+      - name: Locate Admin Project
+        shell: bash
+        run: |
+          set -e
 
-          class _AdminHomeState extends State<AdminHome> {
-            int index = 0;
+          FILE=$(find extracted -type f -path "*/admin/pubspec.yaml" | head -n 1)
 
-            final pages = const [
-              AdminDashboard(),
-              LicensePage(),
-              UpdatesPage(),
-              MorePage(),
-            ];
+          if [ -z "$FILE" ]; then
+            echo "ERROR: admin/pubspec.yaml not found"
+            find extracted -name "pubspec.yaml"
+            exit 1
+          fi
 
-            @override
-            Widget build(BuildContext context) {
-              return Scaffold(
-                appBar: AppBar(
-                  title: const Text('SADEE X DIMA ADMIN'),
-                ),
-                body: pages[index],
-                bottomNavigationBar: NavigationBar(
-                  selectedIndex: index,
-                  onDestinationSelected: (value) {
-                    setState(() {
-                      index = value;
-                    });
-                  },
-                  destinations: const [
-                    NavigationDestination(
-                      icon: Icon(Icons.dashboard),
-                      label: 'Dashboard',
-                    ),
-                    NavigationDestination(
-                      icon: Icon(Icons.key),
-                      label: 'Keys',
-                    ),
-                    NavigationDestination(
-                      icon: Icon(Icons.system_update),
-                      label: 'Updates',
-                    ),
-                    NavigationDestination(
-                      icon: Icon(Icons.more_horiz),
-                      label: 'More',
-                    ),
-                  ],
-                ),
-              );
-            }
-          }
+          DIR=$(dirname "$FILE")
 
-          class AdminDashboard extends StatefulWidget {
-            const AdminDashboard({super.key});
+          echo "ADMIN_DIR=$DIR" >> "$GITHUB_ENV"
 
-            @override
-            State<AdminDashboard> createState() => _AdminDashboardState();
-          }
+          echo "ADMIN PROJECT: $DIR"
 
-          class _AdminDashboardState extends State<AdminDashboard> {
-            bool loading = true;
-            int total = 0;
-            int active = 0;
-            int unused = 0;
-            int paused = 0;
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
 
-            @override
-            void initState() {
-              super.initState();
-              load();
-            }
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.35.7"
+          channel: stable
+          cache: true
 
-            Future<void> load() async {
-              try {
-                final data = await Supabase.instance.client
-                    .from('license_keys')
-                    .select('status');
+      - name: Create User App
+        shell: bash
+        run: |
+          set -e
 
-                int a = 0;
-                int u = 0;
-                int p = 0;
+          flutter create \
+            --org com.sadee.xdima \
+            --project-name sadee_optimizer_user \
+            user_build
 
-                for (final row in data) {
-                  final status =
-                      (row['status'] ?? '').toString().toUpperCase();
+      - name: Copy User Files
+        shell: bash
+        run: |
+          set -e
 
-                  if (status == 'ACTIVE') {
-                    a++;
-                  } else if (status == 'UNUSED') {
-                    u++;
-                  } else if (status == 'PAUSED') {
-                    p++;
-                  }
-                }
+          rm -rf user_build/lib
+          rm -rf user_build/test
 
-                if (!mounted) return;
+          mkdir -p user_build/lib
 
-                setState(() {
-                  total = data.length;
-                  active = a;
-                  unused = u;
-                  paused = p;
-                  loading = false;
-                });
-              } catch (_) {
-                if (!mounted) return;
+          cp -r "$USER_DIR/lib/." user_build/lib/
+          cp "$USER_DIR/pubspec.yaml" user_build/pubspec.yaml
 
-                setState(() {
-                  loading = false;
-                });
-              }
-            }
+      - name: User Dependencies
+        working-directory: user_build
+        run: flutter pub get
 
-            Widget stat(
-              String title,
-              int value,
-              IconData icon,
-            ) {
-              return Card(
-                child: ListTile(
-                  leading: Icon(
-                    icon,
-                    color: Colors.cyan,
-                  ),
-                  title: Text(title),
-                  trailing: Text(
-                    '$value',
-                    style: const TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-              );
-            }
+      - name: User Format
+        working-directory: user_build
+        run: dart format lib
 
-            @override
-            Widget build(BuildContext context) {
-              if (loading) {
-                return const Center(
-                  child: CircularProgressIndicator(),
-                );
-              }
+      - name: User Analyze
+        working-directory: user_build
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
 
-              return RefreshIndicator(
-                onRefresh: load,
-                child: ListView(
-                  padding: const EdgeInsets.all(16),
-                  children: [
-                    const Text(
-                      'CONTROL CENTER',
-                      style: TextStyle(
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    stat(
-                      'Total Keys',
-                      total,
-                      Icons.key,
-                    ),
-                    stat(
-                      'Active',
-                      active,
-                      Icons.check_circle,
-                    ),
-                    stat(
-                      'Unused',
-                      unused,
-                      Icons.pending,
-                    ),
-                    stat(
-                      'Paused',
-                      paused,
-                      Icons.pause_circle,
-                    ),
-                  ],
-                ),
-              );
-            }
-          }
+      - name: Build User APK
+        working-directory: user_build
+        run: flutter build apk --release
 
-          class LicensePage extends StatefulWidget {
-            const LicensePage({super.key});
+      - name: Create Admin App
+        shell: bash
+        run: |
+          set -e
 
-            @override
-            State<LicensePage> createState() => _LicensePageState();
-          }
+          flutter create \
+            --org com.sadee.xdima \
+            --project-name sadee_optimizer_admin \
+            admin_build
 
-          class _LicensePageState extends State<LicensePage> {
-            bool loading = true;
-            List<dynamic> keys = [];
+      - name: Copy Admin Files
+        shell: bash
+        run: |
+          set -e
 
-            @override
-            void initState() {
-              super.initState();
-              load();
-            }
+          rm -rf admin_build/lib
+          rm -rf admin_build/test
 
-            Future<void> load() async {
-              try {
-                final result = await Supabase.instance.client
-                    .from('license_keys')
-                    .select()
-                    .order('created_at', ascending: false);
+          mkdir -p admin_build/lib
 
-                if (!mounted) return;
-
-                setState(() {
-                  keys = result;
-                  loading = false;
-                });
-              } catch (_) {
-                if (!mounted) return;
-
-                setState(() {
-                  loading = false;
-                });
-              }
-            }
-
-            String makeKey() {
-              final now = DateTime.now().millisecondsSinceEpoch;
-              return 'SDX-${now.toString().substring(5)}-${(now % 100000).toString().padLeft(5, '0')}';
-            }
-
-            Future<void> generate(int days) async {
-              final key = makeKey();
-
-              await Supabase.instance.client
-                  .from('license_keys')
-                  .insert({
-                'key_code': key,
-                'duration_days': days,
-                'status': 'UNUSED',
-              });
-
-              await load();
-
-              if (!mounted) return;
-
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text('Created: $key'),
-                ),
-              );
-            }
-
-            Future<void> deleteKey(String key) async {
-              await Supabase.instance.client
-                  .from('license_keys')
-                  .delete()
-                  .eq('key_code', key);
-
-              await load();
-            }
-
-            Future<void> changeStatus(
-              String key,
-              String status,
-            ) async {
-              await Supabase.instance.client
-                  .from('license_keys')
-                  .update({'status': status})
-                  .eq('key_code', key);
-
-              await load();
-            }
-
-            @override
-            Widget build(BuildContext context) {
-              return Column(
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        ElevatedButton(
-                          onPressed: () => generate(7),
-                          child: const Text('7 DAYS'),
-                        ),
-                        ElevatedButton(
-                          onPressed: () => generate(30),
-                          child: const Text('1 MONTH'),
-                        ),
-                        ElevatedButton(
-                          onPressed: () => generate(-1),
-                          child: const Text('LIFETIME'),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Expanded(
-                    child: loading
-                        ? const Center(
-                            child: CircularProgressIndicator(),
-                          )
-                        : RefreshIndicator(
-                            onRefresh: load,
-                            child: ListView.builder(
-                              itemCount: keys.length,
-                              itemBuilder: (context, i) {
-                                final key =
-                                    keys[i] as Map<String, dynamic>;
-
-                                final code =
-                                    (key['key_code'] ?? '').toString();
-
-                                final status =
-                                    (key['status'] ?? 'UNUSED')
-                                        .toString();
-
-                                return Card(
-                                  margin: const EdgeInsets.symmetric(
-                                    horizontal: 12,
-                                    vertical: 5,
-                                  ),
-                                  child: ListTile(
-                                    title: Text(code),
-                                    subtitle: Text(
-                                      'Status: $status\n'
-                                      'Device: ${key['device_id'] ?? 'Not Bound'}',
-                                    ),
-                                    isThreeLine: true,
-                                    trailing: PopupMenuButton<String>(
-                                      onSelected: (value) {
-                                        if (value == 'delete') {
-                                          deleteKey(code);
-                                        } else {
-                                          changeStatus(code, value);
-                                        }
-                                      },
-                                      itemBuilder: (_) => const [
-                                        PopupMenuItem(
-                                          value: 'ACTIVE',
-                                          child: Text('Activate'),
-                                        ),
-                                        PopupMenuItem(
-                                          value: 'PAUSED',
-                                          child: Text('Pause'),
-                                        ),
-                                        PopupMenuItem(
-                                          value: 'UNUSED',
-                                          child: Text('Reset'),
-                                        ),
-                                        PopupMenuItem(
-                                          value: 'delete',
-                                          child: Text('Delete'),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                );
-                              },
-                            ),
-                          ),
-                  ),
-                ],
-              );
-            }
-          }
-
-          class UpdatesPage extends StatelessWidget {
-            const UpdatesPage({super.key});
-
-            @override
-            Widget build(BuildContext context) {
-              return ListView(
-                padding: const EdgeInsets.all(16),
-                children: const [
-                  ListTile(
-                    leading: Icon(
-                      Icons.system_update,
-                      color: Colors.cyan,
-                    ),
-                    title: Text('App Update Manager'),
-                    subtitle: Text(
-                      'Manage app_updates from Supabase.',
-                    ),
-                  ),
-                ],
-              );
-            }
-          }
-
-          class MorePage extends StatelessWidget {
-            const MorePage({super.key});
-
-            @override
-            Widget build(BuildContext context) {
-              return ListView(
-                padding: const EdgeInsets.all(16),
-                children: const [
-                  ListTile(
-                    leading: Icon(Icons.security),
-                    title: Text('Admin Security'),
-                    subtitle: Text(
-                      'Admin PIN is currently stored in the app.',
-                    ),
-                  ),
-                  ListTile(
-                    leading: Icon(Icons.info),
-                    title: Text('SADEE X DIMA ADMIN'),
-                    subtitle: Text('Control Panel'),
-                  ),
-                ],
-              );
-            }
-          }
-          '''
-
-          p.write_text(code.strip() + "\n")
-          PY
+          cp -r "$ADMIN_DIR/lib/." admin_build/lib/
+          cp "$ADMIN_DIR/pubspec.yaml" admin_build/pubspec.yaml
 
       - name: Admin Dependencies
         working-directory: admin_build
@@ -557,3 +171,17 @@
       - name: Build Admin APK
         working-directory: admin_build
         run: flutter build apk --release
+
+      - name: Upload User APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: SADEE-X-DIMA-USER-APK
+          path: user_build/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+
+      - name: Upload Admin APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: SADEE-X-DIMA-ADMIN-APK
+          path: admin_build/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
