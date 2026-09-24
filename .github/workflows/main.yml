@@ -15,21 +15,18 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Find ZIP
+        shell: bash
         run: |
           set -e
-
-          echo "Repository files:"
-          find . -maxdepth 2 -type f ! -path "./.git/*" | sort
 
           ZIP_FILE=$(find . -type f -iname "*.zip" ! -path "./.git/*" | head -n 1)
 
           if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: ZIP file not found."
-            echo "Upload sadee_x_dima_optimizer_v3_user_admin.zip to repository root."
+            echo "❌ ZIP file not found!"
             exit 1
           fi
 
-          echo "ZIP FOUND: $ZIP_FILE"
+          echo "✅ ZIP: $ZIP_FILE"
           echo "ZIP_FILE=$ZIP_FILE" >> "$GITHUB_ENV"
 
       - name: Extract ZIP
@@ -37,40 +34,36 @@ jobs:
           set -e
 
           rm -rf extracted
-          mkdir extracted
+          mkdir -p extracted
 
           unzip -o "$ZIP_FILE" -d extracted
 
-          echo "Extracted:"
-          find extracted -maxdepth 4 -type f | sort
+          echo "✅ ZIP extracted"
 
       - name: Find Projects
         run: |
           set -e
 
-          USER_DIR=$(find extracted -type f -path "*/user/pubspec.yaml" \
-            -exec dirname {} \; | head -n 1)
-
-          ADMIN_DIR=$(find extracted -type f -path "*/admin/pubspec.yaml" \
-            -exec dirname {} \; | head -n 1)
+          USER_DIR=$(find extracted -type f -path "*/user/pubspec.yaml" -exec dirname {} \; | head -n 1)
+          ADMIN_DIR=$(find extracted -type f -path "*/admin/pubspec.yaml" -exec dirname {} \; | head -n 1)
 
           if [ -z "$USER_DIR" ]; then
-            echo "ERROR: user project not found"
+            echo "❌ User project not found"
             exit 1
           fi
 
           if [ -z "$ADMIN_DIR" ]; then
-            echo "ERROR: admin project not found"
+            echo "❌ Admin project not found"
             exit 1
           fi
 
           echo "USER_DIR=$USER_DIR" >> "$GITHUB_ENV"
           echo "ADMIN_DIR=$ADMIN_DIR" >> "$GITHUB_ENV"
 
-          echo "User: $USER_DIR"
-          echo "Admin: $ADMIN_DIR"
+          echo "✅ User: $USER_DIR"
+          echo "✅ Admin: $ADMIN_DIR"
 
-      - name: Setup Java
+      - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -91,8 +84,12 @@ jobs:
             user_build
 
           rm -rf user_build/lib
+          rm -rf user_build/test
+
           cp -r "$USER_DIR/lib" user_build/lib
           cp "$USER_DIR/pubspec.yaml" user_build/pubspec.yaml
+
+          echo "✅ User source copied"
 
       - name: Create Admin Project
         run: |
@@ -102,14 +99,87 @@ jobs:
             admin_build
 
           rm -rf admin_build/lib
+          rm -rf admin_build/test
+
           cp -r "$ADMIN_DIR/lib" admin_build/lib
           cp "$ADMIN_DIR/pubspec.yaml" admin_build/pubspec.yaml
 
-      - name: User Dependencies
+          echo "✅ Admin source copied"
+
+      - name: Fix User Source
+        shell: bash
+        run: |
+          set -e
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("user_build/lib/main.dart")
+          s = p.read_text()
+
+          s = s.replace(
+              "Supabase.initialize(url: supabaseUrl, anonKey: supabaseAnonKey)",
+              "Supabase.initialize(url: supabaseUrl, publishableKey: supabaseAnonKey)"
+          )
+
+          old = """...items.map((x) => Card(color: card, child: ListTile(leading: const Icon(Icons.check_circle_outline, color: accent), title: Text(x, style: const TextStyle(fontWeight: FontWeight.bold)), trailing: const Icon(Icons.chevron_right), onTap: () => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$x is ready for the device-specific implementation.'))))),"""
+
+          new = """...items.map(
+              (x) => Card(
+                color: card,
+                child: ListTile(
+                  leading: const Icon(Icons.check_circle_outline, color: accent),
+                  title: Text(
+                    x,
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        '$x is ready for the device-specific implementation.',
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),"""
+
+          if old not in s:
+              print("⚠️ Original ToolPage line not found; continuing.")
+          else:
+              s = s.replace(old, new)
+
+          p.write_text(s)
+          print("✅ User source fixed")
+          PY
+
+      - name: Fix Admin Source
+        shell: bash
+        run: |
+          set -e
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("admin_build/lib/main.dart")
+          s = p.read_text()
+
+          s = s.replace(
+              "Supabase.initialize(url: supabaseUrl, anonKey: supabaseAnonKey)",
+              "Supabase.initialize(url: supabaseUrl, publishableKey: supabaseAnonKey)"
+          )
+
+          p.write_text(s)
+
+          print("✅ Admin source fixed")
+          PY
+
+      - name: User Pub Get
         working-directory: user_build
         run: flutter pub get
 
-      - name: Admin Dependencies
+      - name: Admin Pub Get
         working-directory: admin_build
         run: flutter pub get
 
@@ -134,9 +204,11 @@ jobs:
         with:
           name: sadee-x-dima-user-apk
           path: user_build/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
 
       - name: Upload Admin APK
         uses: actions/upload-artifact@v4
         with:
           name: sadee-x-dima-admin-apk
           path: admin_build/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
