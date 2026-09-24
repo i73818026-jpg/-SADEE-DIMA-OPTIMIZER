@@ -1,4 +1,4 @@
-name: SADEE X DIMA APK BUILD
+name: SADEE X DIMA BUILD
 
 on:
   push:
@@ -11,12 +11,10 @@ permissions:
 
 jobs:
   build:
-    name: Build User and Admin APK
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
     steps:
-
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -26,297 +24,131 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Flutter Version
-        run: flutter --version
-
-      # =====================================================
-      # FIND ZIP
-      # =====================================================
-
-      - name: Find Project ZIP
+      - name: Find ZIP
         shell: bash
         run: |
           set -e
-
-          ZIP_FILE=$(find . -maxdepth 2 -type f -name "*.zip" | head -n 1)
+          ZIP_FILE=$(find . -type f -name "*.zip" \
+            -not -path "./extracted_project/*" | head -n 1)
 
           if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: Project ZIP not found"
+            echo "ERROR: ZIP not found"
             exit 1
           fi
 
-          echo "ZIP: $ZIP_FILE"
           echo "ZIP_FILE=$ZIP_FILE" >> "$GITHUB_ENV"
+          echo "Using: $ZIP_FILE"
 
-      # =====================================================
-      # EXTRACT ZIP
-      # =====================================================
-
-      - name: Extract Project
+      - name: Extract ZIP
         shell: bash
         run: |
           set -e
-
           rm -rf extracted_project
-          mkdir -p extracted_project
+          mkdir extracted_project
 
           unzip -q "$ZIP_FILE" -d extracted_project
 
-          PUBSPEC=$(find "$GITHUB_WORKSPACE/extracted_project" \
+          PUBSPEC=$(find extracted_project \
             -type f \
-            -name "pubspec.yaml" \
+            -name pubspec.yaml \
             -print -quit)
 
           if [ -z "$PUBSPEC" ]; then
             echo "ERROR: pubspec.yaml not found"
-            find extracted_project -maxdepth 5 -type f
             exit 1
           fi
 
           PROJECT_DIR=$(dirname "$PUBSPEC")
-
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-          echo "Project:"
-          echo "$PROJECT_DIR"
-
-      # =====================================================
-      # VERIFY PROJECT
-      # =====================================================
+          echo "PROJECT_DIR=$PROJECT_DIR"
 
       - name: Verify Project
         shell: bash
         run: |
           set -e
-
           cd "$PROJECT_DIR"
 
           test -f pubspec.yaml
           test -f lib/main_user.dart
           test -f lib/main_admin.dart
 
-          echo "Project verification OK"
+          echo "Project OK"
 
-      # =====================================================
-      # FIX ANDROID PNG
-      # =====================================================
-
-      - name: Repair PNG Resources
+      - name: Fix Gradle Versions
         shell: bash
         run: |
           set -e
-
           cd "$PROJECT_DIR"
 
-          python3 -m pip install --quiet pillow
+          sed -i \
+            's/gradle-[0-9.]*-all\.zip/gradle-8.14.5-all.zip/g' \
+            android/gradle/wrapper/gradle-wrapper.properties || true
 
-          python3 <<'PY'
-          from pathlib import Path
-          from PIL import Image
+          if [ -f android/build.gradle ]; then
+            sed -i \
+              's/com.android.tools.build:gradle:[0-9.]*/com.android.tools.build:gradle:8.11.1/g' \
+              android/build.gradle || true
 
-          root = Path("android/app/src/main/res")
+            sed -i \
+              "s/ext.kotlin_version = ['\"][^'\"]*['\"]/ext.kotlin_version = '2.2.20'/g" \
+              android/build.gradle || true
+          fi
 
-          if not root.exists():
-              print("No Android res directory")
-              raise SystemExit(0)
+          if [ -f android/settings.gradle ]; then
+            sed -i \
+              's/\(com.android.application.*version[[:space:]]*["'\'']\)[0-9.]*\(["'\'']\)/\18.11.1\2/g' \
+              android/settings.gradle || true
 
-          for file in root.rglob("*.png"):
-              try:
-                  img = Image.open(file)
-                  img.load()
-                  img.convert("RGBA").save(file, "PNG")
-                  print("OK:", file)
-              except Exception as e:
-                  print("Skipped:", file, e)
-          PY
+            sed -i \
+              's/\(org.jetbrains.kotlin.android.*version[[:space:]]*["'\'']\)[0-9.]*\(["'\'']\)/\12.2.20\2/g' \
+              android/settings.gradle || true
+          fi
 
-      # =====================================================
-      # FIX ANDROID VERSIONS
-      # =====================================================
-
-      - name: Fix Android Build Versions
-        shell: bash
-        run: |
-          set -e
-
-          cd "$PROJECT_DIR"
-
-          python3 <<'PY'
-          from pathlib import Path
-          import re
-
-          # Gradle wrapper
-          p = Path("android/gradle/wrapper/gradle-wrapper.properties")
-
-          if p.exists():
-              s = p.read_text()
-
-              s = re.sub(
-                  r"gradle-[0-9.]+-all\.zip",
-                  "gradle-8.14.5-all.zip",
-                  s
-              )
-
-              p.write_text(s)
-
-          # android/build.gradle
-          p = Path("android/build.gradle")
-
-          if p.exists():
-              s = p.read_text()
-
-              s = re.sub(
-                  r"com\.android\.tools\.build:gradle:[0-9.]+",
-                  "com.android.tools.build:gradle:8.11.1",
-                  s
-              )
-
-              s = re.sub(
-                  r"ext\.kotlin_version\s*=\s*['\"][^'\"]+['\"]",
-                  "ext.kotlin_version = '2.2.20'",
-                  s
-              )
-
-              s = re.sub(
-                  r"org\.jetbrains\.kotlin:kotlin-gradle-plugin:[0-9.]+",
-                  "org.jetbrains.kotlin:kotlin-gradle-plugin:2.2.20",
-                  s
-              )
-
-              p.write_text(s)
-
-          # settings.gradle
-          p = Path("android/settings.gradle")
-
-          if p.exists():
-              s = p.read_text()
-
-              s = re.sub(
-                  r'(id\s+["\']com\.android\.application["\']\s+version\s+["\'])[^"\']+(["\'])',
-                  r'\g<1>8.11.1\2',
-                  s
-              )
-
-              s = re.sub(
-                  r'(id\s+["\']org\.jetbrains\.kotlin\.android["\']\s+version\s+["\'])[^"\']+(["\'])',
-                  r'\g<1>2.2.20\2',
-                  s
-              )
-
-              p.write_text(s)
-
-          print("Android versions fixed")
-          PY
-
-      # =====================================================
-      # ADD NOTIFICATION PERMISSION
-      # =====================================================
+          echo "Gradle versions checked"
 
       - name: Add Notification Permission
         shell: bash
         run: |
           set -e
-
           cd "$PROJECT_DIR"
 
-          python3 <<'PY'
-          from pathlib import Path
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
 
-          p = Path("android/app/src/main/AndroidManifest.xml")
-          s = p.read_text()
+          if [ -f "$MANIFEST" ]; then
+            if ! grep -q "POST_NOTIFICATIONS" "$MANIFEST"; then
+              sed -i \
+                '2i\    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>' \
+                "$MANIFEST"
+            fi
+          fi
 
-          permission = (
-              '<uses-permission '
-              'android:name="android.permission.POST_NOTIFICATIONS"/>'
-          )
+          echo "Notification permission checked"
 
-          if "POST_NOTIFICATIONS" not in s:
-              pos = s.find(">")
-
-              if pos == -1:
-                  raise SystemExit("Invalid AndroidManifest.xml")
-
-              s = (
-                  s[:pos + 1]
-                  + "\n    "
-                  + permission
-                  + s[pos + 1:]
-              )
-
-              p.write_text(s)
-
-          print("Notification permission OK")
-          PY
-
-      # =====================================================
-      # ADD SYSTEM NOTIFICATION BRIDGE
-      # =====================================================
-
-      - name: Fix System Notification Bridge
+      - name: Repair PNG
         shell: bash
         run: |
           set -e
-
           cd "$PROJECT_DIR"
 
-          python3 <<'PY'
+          python3 -m pip install --quiet pillow
+
+          python3 -c '
           from pathlib import Path
+          from PIL import Image
 
-          p = Path(
-              "android/app/src/main/kotlin/"
-              "com/sadeedima/sadee_x_dima/MainActivity.kt"
-          )
+          root = Path("android/app/src/main/res")
 
-          if not p.exists():
-              raise SystemExit("MainActivity.kt not found")
-
-          s = p.read_text()
-
-          # V6 already contains notifyUser in most versions.
-          # Only add routing when it is missing.
-          if '"notifyUser"' not in s:
-
-              marker = '"deleteFiles" ->'
-
-              route = '''
-                "notifyUser" -> notifyUser(
-                    call.argument<String>("title")
-                        ?: "SADEE X DIMA",
-                    call.argument<String>("text")
-                        ?: ""
-                )
-'''
-
-              if marker in s:
-                  s = s.replace(
-                      marker,
-                      route + "\n                " + marker,
-                      1
-                  )
-
-          p.write_text(s)
-
-          print("System notification bridge checked")
-          PY
-
-      # =====================================================
-      # CHECK FLAVORS
-      # =====================================================
-
-      - name: Check Product Flavors
-        shell: bash
-        run: |
-          set -e
-
-          cd "$PROJECT_DIR"
-
-          grep -Rqs "productFlavors" android/app
-
-          echo "Product flavors OK"
-
-      # =====================================================
-      # CLEAN
-      # =====================================================
+          if root.exists():
+              for p in root.rglob("*.png"):
+                  try:
+                      im = Image.open(p)
+                      im.load()
+                      im.convert("RGBA").save(p, "PNG")
+                      print("Fixed:", p)
+                  except Exception as e:
+                      print("Skip:", p, e)
+          '
 
       - name: Flutter Clean
         shell: bash
@@ -324,19 +156,11 @@ jobs:
           cd "$PROJECT_DIR"
           flutter clean
 
-      # =====================================================
-      # PUB GET
-      # =====================================================
-
       - name: Flutter Pub Get
         shell: bash
         run: |
           cd "$PROJECT_DIR"
           flutter pub get
-
-      # =====================================================
-      # FORMAT
-      # =====================================================
 
       - name: Dart Format
         shell: bash
@@ -344,28 +168,18 @@ jobs:
           cd "$PROJECT_DIR"
           dart format lib
 
-      # =====================================================
-      # ANALYZE
-      # =====================================================
-
-      - name: Flutter Analyze
+      - name: Analyze
         shell: bash
         run: |
           cd "$PROJECT_DIR"
-
           flutter analyze \
             --no-fatal-infos \
             --no-fatal-warnings
-
-      # =====================================================
-      # BUILD USER
-      # =====================================================
 
       - name: Build User APK
         shell: bash
         run: |
           set -e
-
           cd "$PROJECT_DIR"
 
           flutter build apk \
@@ -373,15 +187,10 @@ jobs:
             --flavor user \
             -t lib/main_user.dart
 
-      # =====================================================
-      # BUILD ADMIN
-      # =====================================================
-
       - name: Build Admin APK
         shell: bash
         run: |
           set -e
-
           cd "$PROJECT_DIR"
 
           flutter build apk \
@@ -389,11 +198,7 @@ jobs:
             --flavor admin \
             -t lib/main_admin.dart
 
-      # =====================================================
-      # COLLECT APK
-      # =====================================================
-
-      - name: Collect APK Files
+      - name: Collect APKs
         shell: bash
         run: |
           set -e
@@ -406,10 +211,6 @@ jobs:
             -exec cp {} apk_output/ \;
 
           ls -lh apk_output
-
-      # =====================================================
-      # UPLOAD APK
-      # =====================================================
 
       - name: Upload APKs
         uses: actions/upload-artifact@v4
