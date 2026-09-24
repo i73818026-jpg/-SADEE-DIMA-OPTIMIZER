@@ -11,7 +11,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -19,88 +18,65 @@ jobs:
         shell: bash
         run: |
           set -e
-
-          echo "Searching for ZIP..."
-
-          ZIP_FILE=$(find . -type f -iname "*.zip" ! -path "./.git/*" | head -n 1)
+          ZIP_FILE=$(find . -type f -iname '*.zip' ! -path './.git/*' | head -n 1)
 
           if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: ZIP file not found"
-            echo "Upload your ZIP file to repository root"
-            find . -maxdepth 3 -type f ! -path "./.git/*"
+            echo "ZIP file not found."
+            find . -maxdepth 3 -type f ! -path './.git/*' | sort
             exit 1
           fi
 
-          echo "ZIP FOUND: $ZIP_FILE"
+          echo "ZIP found: $ZIP_FILE"
           echo "ZIP_FILE=$ZIP_FILE" >> "$GITHUB_ENV"
 
       - name: Extract ZIP
         shell: bash
         run: |
           set -e
-
           rm -rf extracted
           mkdir -p extracted
 
           unzip -o "$ZIP_FILE" -d extracted
 
-          echo "ZIP EXTRACTED"
-
+          echo "ZIP extracted."
           find extracted -maxdepth 5 -type f | sort
 
-      - name: Find User Project
+      - name: Locate Projects
         shell: bash
         run: |
           set -e
 
-          USER_DIR=$(find extracted -type f -path "*/user/pubspec.yaml" -exec dirname {} \; | head -n 1)
+          USER_DIR=$(find extracted -type f -path '*/user/pubspec.yaml' -exec dirname {} \; | head -n 1)
+          ADMIN_DIR=$(find extracted -type f -path '*/admin/pubspec.yaml' -exec dirname {} \; | head -n 1)
 
           if [ -z "$USER_DIR" ]; then
-            echo "ERROR: user/pubspec.yaml not found"
-            find extracted -name pubspec.yaml
+            echo "User project not found."
             exit 1
           fi
-
-          echo "USER PROJECT: $USER_DIR"
-          echo "USER_DIR=$USER_DIR" >> "$GITHUB_ENV"
-
-      - name: Find Admin Project
-        shell: bash
-        run: |
-          set -e
-
-          ADMIN_DIR=$(find extracted -type f -path "*/admin/pubspec.yaml" -exec dirname {} \; | head -n 1)
 
           if [ -z "$ADMIN_DIR" ]; then
-            echo "ERROR: admin/pubspec.yaml not found"
-            find extracted -name pubspec.yaml
+            echo "Admin project not found."
             exit 1
           fi
 
-          echo "ADMIN PROJECT: $ADMIN_DIR"
+          echo "USER_DIR=$USER_DIR" >> "$GITHUB_ENV"
           echo "ADMIN_DIR=$ADMIN_DIR" >> "$GITHUB_ENV"
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: '17'
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: "3.35.7"
+          flutter-version: '3.35.7'
           channel: stable
           cache: true
 
-      # ==========================================
-      # USER APP
-      # ==========================================
-
-      - name: Create User Flutter Project
+      - name: Create User Project
         run: |
-          set -e
-
           flutter create \
             --org com.sadee.xdima \
             --project-name sadee_optimizer_user \
@@ -108,55 +84,22 @@ jobs:
 
       - name: Copy User Source
         run: |
-          set -e
-
           rm -rf user_build/lib
           rm -rf user_build/test
 
           cp -r "$USER_DIR/lib" user_build/lib
           cp "$USER_DIR/pubspec.yaml" user_build/pubspec.yaml
 
-          echo "USER SOURCE COPIED"
-
-      - name: Fix User Dart Syntax
-        shell: bash
-        run: |
-          set -e
-
-          FILE="user_build/lib/main.dart"
-
-          echo "Fixing User main.dart..."
-
-          sed -i '155s/]);/]));/' "$FILE"
-
-          echo "Syntax repair applied"
-
-          echo "Checking relevant lines:"
-          sed -n '148,190p' "$FILE"
-
-      - name: User Dependencies
-        working-directory: user_build
-        run: |
-          flutter pub get
-
-      - name: User Analyze
-        working-directory: user_build
-        run: |
-          flutter analyze --no-fatal-infos --no-fatal-warnings
-
       - name: Build User APK
         working-directory: user_build
         run: |
+          flutter pub get
+          dart format lib
+          flutter analyze --no-fatal-infos --no-fatal-warnings
           flutter build apk --release
 
-      # ==========================================
-      # ADMIN APP
-      # ==========================================
-
-      - name: Create Admin Flutter Project
+      - name: Create Admin Project
         run: |
-          set -e
-
           flutter create \
             --org com.sadee.xdima \
             --project-name sadee_optimizer_admin \
@@ -164,34 +107,19 @@ jobs:
 
       - name: Copy Admin Source
         run: |
-          set -e
-
           rm -rf admin_build/lib
           rm -rf admin_build/test
 
           cp -r "$ADMIN_DIR/lib" admin_build/lib
           cp "$ADMIN_DIR/pubspec.yaml" admin_build/pubspec.yaml
 
-          echo "ADMIN SOURCE COPIED"
-
-      - name: Admin Dependencies
-        working-directory: admin_build
-        run: |
-          flutter pub get
-
-      - name: Admin Analyze
-        working-directory: admin_build
-        run: |
-          flutter analyze --no-fatal-infos --no-fatal-warnings
-
       - name: Build Admin APK
         working-directory: admin_build
         run: |
+          flutter pub get
+          dart format lib
+          flutter analyze --no-fatal-infos --no-fatal-warnings
           flutter build apk --release
-
-      # ==========================================
-      # APK ARTIFACTS
-      # ==========================================
 
       - name: Upload User APK
         uses: actions/upload-artifact@v4
@@ -206,12 +134,3 @@ jobs:
           name: sadee-x-dima-admin-apk
           path: admin_build/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
-
-      - name: Success
-        run: |
-          echo "======================================"
-          echo "SADEE X DIMA BUILD SUCCESS"
-          echo "======================================"
-          echo "USER APK  : READY"
-          echo "ADMIN APK : READY"
-          echo "======================================"
