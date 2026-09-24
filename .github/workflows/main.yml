@@ -16,8 +16,18 @@ jobs:
     timeout-minutes: 60
 
     steps:
+
+      # ============================================================
+      # CHECKOUT
+      # ============================================================
+
       - name: Checkout
         uses: actions/checkout@v4
+
+
+      # ============================================================
+      # FLUTTER
+      # ============================================================
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
@@ -28,12 +38,19 @@ jobs:
       - name: Flutter Version
         run: flutter --version
 
-      - name: Find ZIP
+
+      # ============================================================
+      # FIND ZIP
+      # ============================================================
+
+      - name: Find Project ZIP
         shell: bash
         run: |
           set -e
 
-          ZIP_FILE=$(find . -type f -name "*.zip" \
+          ZIP_FILE=$(find . \
+            -type f \
+            -name "*.zip" \
             -not -path "./extracted_project/*" \
             | head -n 1)
 
@@ -43,17 +60,28 @@ jobs:
           fi
 
           echo "ZIP_FILE=$ZIP_FILE" >> "$GITHUB_ENV"
-          echo "Using ZIP: $ZIP_FILE"
 
-      - name: Extract ZIP
+          echo "================================"
+          echo "ZIP FOUND"
+          echo "$ZIP_FILE"
+          echo "================================"
+
+
+      # ============================================================
+      # EXTRACT
+      # ============================================================
+
+      - name: Extract Project
         shell: bash
         run: |
           set -e
 
           rm -rf extracted_project
+
           mkdir -p extracted_project
 
-          unzip -q "$ZIP_FILE" -d extracted_project
+          unzip -q "$ZIP_FILE" \
+            -d extracted_project
 
           PUBSPEC=$(find extracted_project \
             -type f \
@@ -69,8 +97,15 @@ jobs:
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-          echo "Project directory:"
+          echo "================================"
+          echo "PROJECT DIRECTORY"
           echo "$PROJECT_DIR"
+          echo "================================"
+
+
+      # ============================================================
+      # VERIFY PROJECT
+      # ============================================================
 
       - name: Verify Project
         shell: bash
@@ -85,7 +120,75 @@ jobs:
 
           echo "Project verification OK"
 
-      - name: Fix OptimizerService notifyOperation
+
+      # ============================================================
+      # FIX GRADLE
+      # ============================================================
+
+      - name: Fix Gradle Versions
+        shell: bash
+        run: |
+          set -e
+
+          cd "$PROJECT_DIR"
+
+          WRAPPER="android/gradle/wrapper/gradle-wrapper.properties"
+
+          if [ -f "$WRAPPER" ]; then
+            sed -i \
+              's/gradle-[0-9.]*-all\.zip/gradle-8.14.5-all.zip/g' \
+              "$WRAPPER"
+          fi
+
+          if [ -f "android/build.gradle" ]; then
+
+            sed -i \
+              's/com.android.tools.build:gradle:[0-9.]*/com.android.tools.build:gradle:8.11.1/g' \
+              android/build.gradle || true
+
+            sed -i \
+              "s/ext.kotlin_version = ['\"][^'\"]*['\"]/ext.kotlin_version = '2.2.20'/g" \
+              android/build.gradle || true
+
+          fi
+
+          echo "Gradle versions checked"
+
+
+      # ============================================================
+      # ADD NOTIFICATION PERMISSION
+      # ============================================================
+
+      - name: Fix Notification Permission
+        shell: bash
+        run: |
+          set -e
+
+          cd "$PROJECT_DIR"
+
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+
+          if [ ! -f "$MANIFEST" ]; then
+            echo "ERROR: AndroidManifest.xml not found"
+            exit 1
+          fi
+
+          if ! grep -q "android.permission.POST_NOTIFICATIONS" "$MANIFEST"; then
+
+            sed -i \
+              '2i\    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>' \
+              "$MANIFEST"
+
+          fi
+
+          echo "POST_NOTIFICATIONS permission OK"
+
+
+      # ============================================================
+      # NATIVE NOTIFICATION + CLEANER PATCH
+      # ============================================================
+
+      - name: Fix Notifications And Cleaner
         shell: bash
         run: |
           set -e
@@ -95,16 +198,26 @@ jobs:
           python3 <<'PY'
           from pathlib import Path
 
-          path = Path("lib/services/optimizer_service.dart")
 
-          if not path.exists():
+          # ========================================================
+          # 1. OPTIMIZER SERVICE
+          # ========================================================
+
+          optimizer = Path(
+              "lib/services/optimizer_service.dart"
+          )
+
+          if not optimizer.exists():
               raise SystemExit(
                   "ERROR: optimizer_service.dart not found"
               )
 
-          text = path.read_text(encoding="utf-8")
+          text = optimizer.read_text(
+              encoding="utf-8"
+          )
 
-          if "notifyOperation(" not in text:
+          if "Future<void> notifyOperation(" not in text:
+
               method = r'''
             Future<void> notifyOperation(
               String title,
@@ -120,23 +233,26 @@ jobs:
                 );
               } catch (_) {}
             }
+
           '''
 
               marker = "\n  String formatBytes"
 
               if marker in text:
+
                   text = text.replace(
                       marker,
                       "\n" + method + marker,
                       1,
                   )
+
               else:
+
                   pos = text.rfind("\n}")
 
-                  if pos == -1:
+                  if pos < 0:
                       raise SystemExit(
-                          "ERROR: Could not find "
-                          "OptimizerService class end"
+                          "ERROR: OptimizerService class end not found"
                       )
 
                   text = (
@@ -146,70 +262,283 @@ jobs:
                       + text[pos:]
                   )
 
-              path.write_text(
+              optimizer.write_text(
                   text,
-                  encoding="utf-8",
+                  encoding="utf-8"
               )
 
-          if "notifyOperation(" not in path.read_text(
-              encoding="utf-8"
-          ):
+
+          # ========================================================
+          # 2. USER HOME CLEANER OPTIONS
+          # ========================================================
+
+          user_home = Path(
+              "lib/screens/user_home.dart"
+          )
+
+          if user_home.exists():
+
+              text = user_home.read_text(
+                  encoding="utf-8"
+              )
+
+              # Add extra cleaner categories
+              text = text.replace(
+                  "'downloads','large','old','duplicates','junk','empty'",
+                  "'downloads','large','old','duplicates','junk','empty',"
+                  "'thumbnails','apk','temp'"
+              )
+
+              # Add labels
+              text = text.replace(
+                  "'empty':'Empty Folders'}[c]??c",
+                  "'empty':'Empty Folders',"
+                  "'thumbnails':'Thumbnail Cache',"
+                  "'apk':'APK Files',"
+                  "'temp':'Temporary Files'}[c]??c"
+              )
+
+              user_home.write_text(
+                  text,
+                  encoding="utf-8"
+              )
+
+
+          # ========================================================
+          # 3. MAIN ACTIVITY
+          # ========================================================
+
+          kotlin_files = list(
+              Path(
+                  "android/app/src/main/kotlin"
+              ).rglob("MainActivity.kt")
+          )
+
+          if not kotlin_files:
               raise SystemExit(
-                  "ERROR: notifyOperation patch failed"
+                  "ERROR: MainActivity.kt not found"
               )
 
-          print("notifyOperation() FIXED")
+          main_activity = kotlin_files[0]
 
-      - name: Add Notification Permission
+          text = main_activity.read_text(
+              encoding="utf-8"
+          )
+
+
+          # ========================================================
+          # NOTIFICATION METHOD CHANNEL
+          # ========================================================
+
+          if '"notifyUser" ->' not in text:
+
+              # Try common existing deleteFiles case
+              patterns = [
+                  (
+                      '"deleteFiles" -> result.success('
+                      'deleteFiles(call.argument<List<String>>("paths") '
+                      '?: emptyList()))'
+                  ),
+                  (
+                      '"cancelScan" -> {'
+                  ),
+              ]
+
+              inserted = False
+
+              for marker in patterns:
+
+                  if marker in text:
+
+                      if marker.startswith(
+                          '"deleteFiles"'
+                      ):
+
+                          replacement = (
+                              marker
+                              + '\n'
+                              + '                "notifyUser" -> {\n'
+                              + '                    val title = '
+                              + 'call.argument<String>("title") '
+                              + '?: "SADEE X DIMA"\n'
+                              + '                    val message = '
+                              + 'call.argument<String>("text") '
+                              + '?: ""\n'
+                              + '                    notifyUser(title, message)\n'
+                              + '                    result.success(true)\n'
+                              + '                }'
+                          )
+
+                          text = text.replace(
+                              marker,
+                              replacement,
+                              1
+                          )
+
+                          inserted = True
+                          break
+
+              if not inserted:
+
+                  print(
+                      "WARNING: Could not locate "
+                      "MethodChannel insertion point"
+                  )
+
+
+          # ========================================================
+          # ENSURE NOTIFY USER FUNCTION
+          # ========================================================
+
+          if "fun notifyUser(" not in text:
+
+              notification_method = r'''
+
+          private fun notifyUser(
+              title: String,
+              message: String
+          ) {
+              try {
+                  val manager =
+                      getSystemService(
+                          android.content.Context.NOTIFICATION_SERVICE
+                      ) as android.app.NotificationManager
+
+                  val channelId = "sxd_ops"
+
+                  if (
+                      android.os.Build.VERSION.SDK_INT >=
+                      android.os.Build.VERSION_CODES.O
+                  ) {
+                      val channel =
+                          android.app.NotificationChannel(
+                              channelId,
+                              "SADEE X DIMA Operations",
+                              android.app.NotificationManager.IMPORTANCE_LOW
+                          )
+
+                      manager.createNotificationChannel(
+                          channel
+                      )
+                  }
+
+                  val builder =
+                      androidx.core.app.NotificationCompat.Builder(
+                          this,
+                          channelId
+                      )
+                          .setSmallIcon(
+                              android.R.drawable.ic_dialog_info
+                          )
+                          .setContentTitle(title)
+                          .setContentText(message)
+                          .setStyle(
+                              androidx.core.app.NotificationCompat.BigTextStyle()
+                                  .bigText(message)
+                          )
+                          .setPriority(
+                              androidx.core.app.NotificationCompat.PRIORITY_LOW
+                          )
+                          .setAutoCancel(true)
+
+                  manager.notify(
+                      System.currentTimeMillis().toInt(),
+                      builder.build()
+                  )
+
+              } catch (e: Exception) {
+                  e.printStackTrace()
+              }
+          }
+
+          '''
+
+              pos = text.rfind("\n}")
+
+              if pos >= 0:
+
+                  text = (
+                      text[:pos]
+                      + notification_method
+                      + text[pos:]
+                  )
+
+
+          # ========================================================
+          # CLEANER EXTRA MATCHERS
+          # ========================================================
+
+          old_match = (
+              '"junk"->ext in setOf("tmp","temp","log","bak","old",'
+              '"cache","crdownload","part","dmp")||'
+              'n.endsWith(".nomedia.tmp");'
+              'else->false'
+          )
+
+          new_match = (
+              '"junk"->ext in setOf("tmp","temp","log","bak","old",'
+              '"cache","crdownload","part","dmp")||'
+              'n.endsWith(".nomedia.tmp");'
+              '"thumbnails"->n.contains(".thumb")||'
+              'p.contains("/.thumbnails/");'
+              '"apk"->ext=="apk";'
+              '"temp"->ext in setOf("tmp","temp","cache","log","bak");'
+              'else->false'
+          )
+
+          if (
+              '"thumbnails"->n.contains(".thumb")'
+              not in text
+          ):
+
+              if old_match in text:
+
+                  text = text.replace(
+                      old_match,
+                      new_match,
+                      1
+                  )
+
+          main_activity.write_text(
+              text,
+              encoding="utf-8"
+          )
+
+          print(
+              "Notification + cleaner patch completed"
+          )
+
+          PY
+
+
+      # ============================================================
+      # CHECK NOTIFICATION BRIDGE
+      # ============================================================
+
+      - name: Verify Notification Bridge
         shell: bash
         run: |
           set -e
 
           cd "$PROJECT_DIR"
 
-          MANIFEST="android/app/src/main/AndroidManifest.xml"
+          grep -Fq \
+            "notifyOperation" \
+            lib/services/optimizer_service.dart
 
-          if [ ! -f "$MANIFEST" ]; then
-            echo "ERROR: AndroidManifest.xml not found"
-            exit 1
-          fi
+          grep -Fq \
+            "notifyUser" \
+            android/app/src/main/kotlin/*/*/*/MainActivity.kt \
+            2>/dev/null || true
 
-          if ! grep -q "POST_NOTIFICATIONS" "$MANIFEST"; then
-            sed -i \
-              '2i\    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>' \
-              "$MANIFEST"
-          fi
+          echo "Notification bridge check completed"
 
-          echo "POST_NOTIFICATIONS permission OK"
 
-      - name: Check Android Notification Bridge
-        shell: bash
-        run: |
-          set -e
+      # ============================================================
+      # PNG REPAIR
+      # ============================================================
 
-          cd "$PROJECT_DIR"
-
-          MAIN_KOTLIN=$(find android/app/src/main/kotlin \
-            -type f \
-            -name "MainActivity.kt" \
-            -print -quit)
-
-          if [ -z "$MAIN_KOTLIN" ]; then
-            echo "ERROR: MainActivity.kt not found"
-            exit 1
-          fi
-
-          echo "MainActivity:"
-          echo "$MAIN_KOTLIN"
-
-          if grep -q "notifyUser" "$MAIN_KOTLIN"; then
-            echo "Native notifyUser() already exists"
-          else
-            echo "WARNING: Native notifyUser() not found"
-            echo "Build will continue"
-          fi
-
-      - name: Repair PNG
+      - name: Repair PNG Files
         shell: bash
         run: |
           set -e
@@ -227,19 +556,30 @@ jobs:
           )
 
           if not root.exists():
-              print("Android resources not found")
+              print(
+                  "Android resources directory not found"
+              )
               raise SystemExit(0)
 
           for path in root.rglob("*.png"):
+
               try:
+
                   image = Image.open(path)
                   image.load()
+
                   image.convert("RGBA").save(
                       path,
                       format="PNG"
                   )
-                  print("PNG OK:", path)
+
+                  print(
+                      "PNG repaired:",
+                      path
+                  )
+
               except Exception as error:
+
                   print(
                       "PNG skipped:",
                       path,
@@ -247,32 +587,10 @@ jobs:
                   )
           PY
 
-      - name: Fix Gradle Versions
-        shell: bash
-        run: |
-          set -e
 
-          cd "$PROJECT_DIR"
-
-          GRADLE_FILE="android/gradle/wrapper/gradle-wrapper.properties"
-
-          if [ -f "$GRADLE_FILE" ]; then
-            sed -i \
-              's/gradle-[0-9.]*-all\.zip/gradle-8.14.5-all.zip/g' \
-              "$GRADLE_FILE"
-          fi
-
-          if [ -f "android/build.gradle" ]; then
-            sed -i \
-              's/com.android.tools.build:gradle:[0-9.]*/com.android.tools.build:gradle:8.11.1/g' \
-              android/build.gradle || true
-
-            sed -i \
-              "s/ext.kotlin_version = ['\"][^'\"]*['\"]/ext.kotlin_version = '2.2.20'/g" \
-              android/build.gradle || true
-          fi
-
-          echo "Android build versions checked"
+      # ============================================================
+      # CHECK FLAVORS
+      # ============================================================
 
       - name: Check Product Flavors
         shell: bash
@@ -281,51 +599,97 @@ jobs:
 
           cd "$PROJECT_DIR"
 
-          if ! grep -Rqs "productFlavors" android/app; then
+          if ! grep -Rqs \
+            "productFlavors" \
+            android/app; then
+
             echo "ERROR: productFlavors not found"
             exit 1
+
           fi
 
-          echo "productFlavors OK"
+          echo "Product flavors OK"
+
+
+      # ============================================================
+      # CLEAN
+      # ============================================================
 
       - name: Flutter Clean
-        shell: bash
-        run: |
-          cd "$PROJECT_DIR"
-          flutter clean
-
-      - name: Flutter Pub Get
-        shell: bash
-        run: |
-          cd "$PROJECT_DIR"
-          flutter pub get
-
-      - name: Dart Format
-        shell: bash
-        run: |
-          cd "$PROJECT_DIR"
-          dart format lib
-
-      - name: Verify notifyOperation
         shell: bash
         run: |
           set -e
 
           cd "$PROJECT_DIR"
 
-          grep -Fq "notifyOperation" \
+          flutter clean
+
+
+      # ============================================================
+      # PUB GET
+      # ============================================================
+
+      - name: Flutter Pub Get
+        shell: bash
+        run: |
+          set -e
+
+          cd "$PROJECT_DIR"
+
+          flutter pub get
+
+
+      # ============================================================
+      # FORMAT
+      # ============================================================
+
+      - name: Dart Format
+        shell: bash
+        run: |
+          set -e
+
+          cd "$PROJECT_DIR"
+
+          dart format lib
+
+
+      # ============================================================
+      # VERIFY NOTIFY OPERATION
+      # ============================================================
+
+      - name: Verify OptimizerService
+        shell: bash
+        run: |
+          set -e
+
+          cd "$PROJECT_DIR"
+
+          grep -Fq \
+            "Future<void> notifyOperation(" \
             lib/services/optimizer_service.dart
 
-          echo "notifyOperation verified"
+          echo "notifyOperation() verified"
+
+
+      # ============================================================
+      # ANALYZE
+      # ============================================================
 
       - name: Flutter Analyze
         shell: bash
         run: |
+          set -e
+
           cd "$PROJECT_DIR"
 
           flutter analyze \
             --no-fatal-infos \
             --no-fatal-warnings
+
+
+      # ============================================================
+      # BUILD USER
+      # ============================================================
 
       - name: Build User APK
         shell: bash
@@ -339,6 +703,11 @@ jobs:
             --flavor user \
             -t lib/main_user.dart
 
+
+      # ============================================================
+      # BUILD ADMIN
+      # ============================================================
+
       - name: Build Admin APK
         shell: bash
         run: |
@@ -351,6 +720,11 @@ jobs:
             --flavor admin \
             -t lib/main_admin.dart
 
+
+      # ============================================================
+      # COLLECT APK
+      # ============================================================
+
       - name: Collect APKs
         shell: bash
         run: |
@@ -358,13 +732,22 @@ jobs:
 
           mkdir -p apk_output
 
-          find "$PROJECT_DIR/build/app/outputs/flutter-apk" \
+          find \
+            "$PROJECT_DIR/build/app/outputs/flutter-apk" \
             -type f \
             -name "*.apk" \
             -exec cp {} apk_output/ \;
 
-          echo "APK files:"
+          echo "================================"
+          echo "BUILT APK FILES"
+          echo "================================"
+
           ls -lh apk_output
+
+
+      # ============================================================
+      # UPLOAD APK
+      # ============================================================
 
       - name: Upload APKs
         uses: actions/upload-artifact@v4
