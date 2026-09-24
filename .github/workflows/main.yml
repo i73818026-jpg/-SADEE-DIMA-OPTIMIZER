@@ -11,6 +11,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -23,13 +24,15 @@ jobs:
 
           if [ -z "$ZIP_FILE" ]; then
             echo "❌ ZIP file not found!"
+            echo "Upload sadee_x_dima_optimizer_v3_user_admin.zip to repository root."
             exit 1
           fi
 
-          echo "✅ ZIP: $ZIP_FILE"
+          echo "✅ ZIP FOUND: $ZIP_FILE"
           echo "ZIP_FILE=$ZIP_FILE" >> "$GITHUB_ENV"
 
       - name: Extract ZIP
+        shell: bash
         run: |
           set -e
 
@@ -40,12 +43,20 @@ jobs:
 
           echo "✅ ZIP extracted"
 
-      - name: Find Projects
+          find extracted -maxdepth 4 -type f | sort
+
+      - name: Find User and Admin
+        shell: bash
         run: |
           set -e
 
-          USER_DIR=$(find extracted -type f -path "*/user/pubspec.yaml" -exec dirname {} \; | head -n 1)
-          ADMIN_DIR=$(find extracted -type f -path "*/admin/pubspec.yaml" -exec dirname {} \; | head -n 1)
+          USER_DIR=$(find extracted -type f \
+            -path "*/user/pubspec.yaml" \
+            -exec dirname {} \; | head -n 1)
+
+          ADMIN_DIR=$(find extracted -type f \
+            -path "*/admin/pubspec.yaml" \
+            -exec dirname {} \; | head -n 1)
 
           if [ -z "$USER_DIR" ]; then
             echo "❌ User project not found"
@@ -60,8 +71,8 @@ jobs:
           echo "USER_DIR=$USER_DIR" >> "$GITHUB_ENV"
           echo "ADMIN_DIR=$ADMIN_DIR" >> "$GITHUB_ENV"
 
-          echo "✅ User: $USER_DIR"
-          echo "✅ Admin: $ADMIN_DIR"
+          echo "✅ USER: $USER_DIR"
+          echo "✅ ADMIN: $ADMIN_DIR"
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
@@ -76,8 +87,12 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Create User Project
+      # ---------------- USER ----------------
+
+      - name: Create User Flutter Project
         run: |
+          set -e
+
           flutter create \
             --org com.sadee.xdima \
             --project-name sadee_optimizer_user \
@@ -91,8 +106,55 @@ jobs:
 
           echo "✅ User source copied"
 
-      - name: Create Admin Project
+      - name: Fix User Source
+        shell: bash
         run: |
+          set -e
+
+          python3 <<'PY'
+          from pathlib import Path
+
+          p = Path("user_build/lib/main.dart")
+          s = p.read_text()
+
+          # Fix Supabase API
+          s = s.replace(
+              "Supabase.initialize(url: supabaseUrl, anonKey: supabaseAnonKey)",
+              "Supabase.initialize(url: supabaseUrl, publishableKey: supabaseAnonKey)"
+          )
+
+          # Fix missing closing parenthesis in Home page
+          s = s.replace(
+              "          _launchButton(),\n        ]);",
+              "          _launchButton(),\n        ]));"
+          )
+
+          p.write_text(s)
+
+          print("✅ User main.dart fixed")
+          PY
+
+      - name: User Dependencies
+        working-directory: user_build
+        run: |
+          flutter pub get
+
+      - name: User Analyze
+        working-directory: user_build
+        run: |
+          flutter analyze
+
+      - name: Build User APK
+        working-directory: user_build
+        run: |
+          flutter build apk --release
+
+      # ---------------- ADMIN ----------------
+
+      - name: Create Admin Flutter Project
+        run: |
+          set -e
+
           flutter create \
             --org com.sadee.xdima \
             --project-name sadee_optimizer_admin \
@@ -106,65 +168,18 @@ jobs:
 
           echo "✅ Admin source copied"
 
-      - name: Fix User Source
-        shell: bash
-        run: |
-          set -e
-
-          python3 - <<'PY'
-          from pathlib import Path
-
-          p = Path("user_build/lib/main.dart")
-          s = p.read_text()
-
-          s = s.replace(
-              "Supabase.initialize(url: supabaseUrl, anonKey: supabaseAnonKey)",
-              "Supabase.initialize(url: supabaseUrl, publishableKey: supabaseAnonKey)"
-          )
-
-          old = """...items.map((x) => Card(color: card, child: ListTile(leading: const Icon(Icons.check_circle_outline, color: accent), title: Text(x, style: const TextStyle(fontWeight: FontWeight.bold)), trailing: const Icon(Icons.chevron_right), onTap: () => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$x is ready for the device-specific implementation.'))))),"""
-
-          new = """...items.map(
-              (x) => Card(
-                color: card,
-                child: ListTile(
-                  leading: const Icon(Icons.check_circle_outline, color: accent),
-                  title: Text(
-                    x,
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () => ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(
-                        '$x is ready for the device-specific implementation.',
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),"""
-
-          if old not in s:
-              print("⚠️ Original ToolPage line not found; continuing.")
-          else:
-              s = s.replace(old, new)
-
-          p.write_text(s)
-          print("✅ User source fixed")
-          PY
-
       - name: Fix Admin Source
         shell: bash
         run: |
           set -e
 
-          python3 - <<'PY'
+          python3 <<'PY'
           from pathlib import Path
 
           p = Path("admin_build/lib/main.dart")
           s = p.read_text()
 
+          # Fix Supabase API
           s = s.replace(
               "Supabase.initialize(url: supabaseUrl, anonKey: supabaseAnonKey)",
               "Supabase.initialize(url: supabaseUrl, publishableKey: supabaseAnonKey)"
@@ -172,32 +187,25 @@ jobs:
 
           p.write_text(s)
 
-          print("✅ Admin source fixed")
+          print("✅ Admin main.dart fixed")
           PY
 
-      - name: User Pub Get
-        working-directory: user_build
-        run: flutter pub get
-
-      - name: Admin Pub Get
+      - name: Admin Dependencies
         working-directory: admin_build
-        run: flutter pub get
+        run: |
+          flutter pub get
 
-      - name: Analyze User
-        working-directory: user_build
-        run: flutter analyze
-
-      - name: Analyze Admin
+      - name: Admin Analyze
         working-directory: admin_build
-        run: flutter analyze
-
-      - name: Build User APK
-        working-directory: user_build
-        run: flutter build apk --release
+        run: |
+          flutter analyze
 
       - name: Build Admin APK
         working-directory: admin_build
-        run: flutter build apk --release
+        run: |
+          flutter build apk --release
+
+      # ---------------- APK OUTPUT ----------------
 
       - name: Upload User APK
         uses: actions/upload-artifact@v4
@@ -212,3 +220,12 @@ jobs:
           name: sadee-x-dima-admin-apk
           path: admin_build/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
+
+      - name: Build Complete
+        run: |
+          echo "======================================"
+          echo "✅ SADEE X DIMA BUILD COMPLETE"
+          echo "======================================"
+          echo "USER APK  : sadee-x-dima-user-apk"
+          echo "ADMIN APK : sadee-x-dima-admin-apk"
+          echo "======================================"
