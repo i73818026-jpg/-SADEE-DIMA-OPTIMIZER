@@ -11,48 +11,24 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-
-      # =========================
-      # CHECKOUT
-      # =========================
-
-      - name: Checkout Repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      # =========================
-      # FIND ZIP
-      # =========================
-
-      - name: Find ZIP File
+      - name: Find ZIP
         shell: bash
         run: |
           set -e
 
-          echo "Searching for ZIP..."
-
-          ZIP_FILE=$(find . \
-            -type f \
-            -iname "*.zip" \
-            ! -path "./.git/*" \
-            | head -n 1)
+          ZIP_FILE=$(find . -type f -iname "*.zip" ! -path "./.git/*" | head -n 1)
 
           if [ -z "$ZIP_FILE" ]; then
-            echo "❌ ZIP file not found!"
-
-            echo "Repository files:"
-            find . -maxdepth 3 -type f \
-              ! -path "./.git/*" | sort
-
+            echo "ZIP file not found!"
+            echo "Upload sadee_x_dima_optimizer_v3_FIXED.zip to the repository root."
             exit 1
           fi
 
-          echo "✅ ZIP FOUND: $ZIP_FILE"
-
+          echo "ZIP found: $ZIP_FILE"
           echo "ZIP_FILE=$ZIP_FILE" >> "$GITHUB_ENV"
-
-      # =========================
-      # EXTRACT ZIP
-      # =========================
 
       - name: Extract ZIP
         shell: bash
@@ -62,67 +38,47 @@ jobs:
           rm -rf extracted
           mkdir -p extracted
 
-          echo "Extracting ZIP..."
-
           unzip -o "$ZIP_FILE" -d extracted
 
-          echo "✅ ZIP extracted"
+          echo "ZIP extracted successfully"
 
-          echo "Extracted files:"
-          find extracted -maxdepth 5 -type f | sort
+          find extracted -maxdepth 4 -type f | sort
 
-      # =========================
-      # FIND USER + ADMIN
-      # =========================
-
-      - name: Find Projects
+      - name: Find User Project
         shell: bash
         run: |
           set -e
 
-          USER_DIR=$(find extracted \
-            -type f \
-            -path "*/user/pubspec.yaml" \
-            -exec dirname {} \; \
-            | head -n 1)
-
-          ADMIN_DIR=$(find extracted \
-            -type f \
-            -path "*/admin/pubspec.yaml" \
-            -exec dirname {} \; \
-            | head -n 1)
+          USER_DIR=$(find extracted -type f -path "*/user/pubspec.yaml" -exec dirname {} \; | head -n 1)
 
           if [ -z "$USER_DIR" ]; then
-            echo "❌ User project not found!"
-            find extracted -type f -name "pubspec.yaml"
+            echo "User project not found!"
             exit 1
           fi
+
+          echo "User project: $USER_DIR"
+          echo "USER_DIR=$USER_DIR" >> "$GITHUB_ENV"
+
+      - name: Find Admin Project
+        shell: bash
+        run: |
+          set -e
+
+          ADMIN_DIR=$(find extracted -type f -path "*/admin/pubspec.yaml" -exec dirname {} \; | head -n 1)
 
           if [ -z "$ADMIN_DIR" ]; then
-            echo "❌ Admin project not found!"
-            find extracted -type f -name "pubspec.yaml"
+            echo "Admin project not found!"
             exit 1
           fi
 
-          echo "USER_DIR=$USER_DIR" >> "$GITHUB_ENV"
+          echo "Admin project: $ADMIN_DIR"
           echo "ADMIN_DIR=$ADMIN_DIR" >> "$GITHUB_ENV"
-
-          echo "✅ USER: $USER_DIR"
-          echo "✅ ADMIN: $ADMIN_DIR"
-
-      # =========================
-      # JAVA 17
-      # =========================
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
-
-      # =========================
-      # FLUTTER
-      # =========================
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
@@ -131,263 +87,79 @@ jobs:
           channel: stable
           cache: true
 
-      # ==================================================
-      # USER APP
-      # ==================================================
-
       - name: Create User Flutter Project
-        shell: bash
         run: |
-          set -e
-
           flutter create \
             --org com.sadee.xdima \
             --project-name sadee_optimizer_user \
             user_build
 
+      - name: Copy User Source
+        run: |
           rm -rf user_build/lib
           rm -rf user_build/test
 
           cp -r "$USER_DIR/lib" user_build/lib
           cp "$USER_DIR/pubspec.yaml" user_build/pubspec.yaml
 
-          echo "✅ User project created"
+          echo "User source copied"
 
-      # =========================
-      # REPAIR USER SOURCE
-      # =========================
-
-      - name: Repair User Source
-        shell: bash
-        run: |
-          set -e
-
-          cd user_build
-
-          python3 <<'PY'
-          from pathlib import Path
-
-          p = Path("lib/main.dart")
-          s = p.read_text()
-
-          # Supabase API
-          s = s.replace(
-              "Supabase.initialize(url: supabaseUrl, anonKey: supabaseAnonKey)",
-              "Supabase.initialize(url: supabaseUrl, publishableKey: supabaseAnonKey)"
-          )
-
-          # Repair old broken closing bracket
-          s = s.replace(
-              "_launchButton(),\n        ]);",
-              "_launchButton(),\n        ]));"
-          )
-
-          # Completely replace ToolPage if present
-          start = s.find("class ToolPage extends StatelessWidget {")
-
-          if start != -1:
-
-              new_tool_page = r'''
-class ToolPage extends StatelessWidget {
-  final String title;
-  final IconData icon;
-  final List<String> items;
-
-  const ToolPage({
-    super.key,
-    required this.title,
-    required this.icon,
-    required this.items,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return SafeArea(
-      child: ListView(
-        padding: const EdgeInsets.all(18),
-        children: [
-          Row(
-            children: [
-              Icon(
-                icon,
-                color: accent,
-                size: 30,
-              ),
-              const SizedBox(width: 10),
-              Text(
-                title,
-                style: const TextStyle(
-                  fontSize: 28,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'SADEE X DIMA OPTIMIZER',
-            style: TextStyle(
-              color: Colors.white54,
-            ),
-          ),
-          const SizedBox(height: 18),
-          ...items.map(
-            (x) => Card(
-              color: card,
-              child: ListTile(
-                leading: const Icon(
-                  Icons.check_circle_outline,
-                  color: accent,
-                ),
-                title: Text(
-                  x,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                trailing: const Icon(
-                  Icons.chevron_right,
-                ),
-                onTap: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(
-                        '$x is ready for the device-specific implementation.',
-                      ),
-                    ),
-                  );
-                },
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-'''
-
-              s = s[:start] + new_tool_page
-
-          p.write_text(s)
-
-          print("✅ User source repaired")
-          PY
-
-          dart format lib
-
-      # =========================
-      # USER DEPENDENCIES
-      # =========================
-
-      - name: User Pub Get
+      - name: User Dependencies
         working-directory: user_build
         run: |
           flutter pub get
 
-      # =========================
-      # USER ANALYZE
-      # =========================
+      - name: Format User
+        working-directory: user_build
+        run: |
+          dart format lib
 
       - name: Analyze User
         working-directory: user_build
         run: |
-          flutter analyze \
-            --no-fatal-infos \
-            --no-fatal-warnings
-
-      # =========================
-      # USER APK
-      # =========================
+          flutter analyze
 
       - name: Build User APK
         working-directory: user_build
         run: |
           flutter build apk --release
 
-      # ==================================================
-      # ADMIN APP
-      # ==================================================
-
       - name: Create Admin Flutter Project
-        shell: bash
         run: |
-          set -e
-
           flutter create \
             --org com.sadee.xdima \
             --project-name sadee_optimizer_admin \
             admin_build
 
+      - name: Copy Admin Source
+        run: |
           rm -rf admin_build/lib
           rm -rf admin_build/test
 
           cp -r "$ADMIN_DIR/lib" admin_build/lib
           cp "$ADMIN_DIR/pubspec.yaml" admin_build/pubspec.yaml
 
-          echo "✅ Admin project created"
+          echo "Admin source copied"
 
-      # =========================
-      # REPAIR ADMIN SOURCE
-      # =========================
-
-      - name: Repair Admin Source
-        shell: bash
-        run: |
-          set -e
-
-          cd admin_build
-
-          python3 <<'PY'
-          from pathlib import Path
-
-          p = Path("lib/main.dart")
-          s = p.read_text()
-
-          s = s.replace(
-              "Supabase.initialize(url: supabaseUrl, anonKey: supabaseAnonKey)",
-              "Supabase.initialize(url: supabaseUrl, publishableKey: supabaseAnonKey)"
-          )
-
-          p.write_text(s)
-
-          print("✅ Admin source repaired")
-          PY
-
-          dart format lib
-
-      # =========================
-      # ADMIN DEPENDENCIES
-      # =========================
-
-      - name: Admin Pub Get
+      - name: Admin Dependencies
         working-directory: admin_build
         run: |
           flutter pub get
 
-      # =========================
-      # ADMIN ANALYZE
-      # =========================
+      - name: Format Admin
+        working-directory: admin_build
+        run: |
+          dart format lib
 
       - name: Analyze Admin
         working-directory: admin_build
         run: |
-          flutter analyze \
-            --no-fatal-infos \
-            --no-fatal-warnings
-
-      # =========================
-      # ADMIN APK
-      # =========================
+          flutter analyze
 
       - name: Build Admin APK
         working-directory: admin_build
         run: |
           flutter build apk --release
-
-      # ==================================================
-      # UPLOAD APKs
-      # ==================================================
 
       - name: Upload User APK
         uses: actions/upload-artifact@v4
@@ -403,20 +175,10 @@ class ToolPage extends StatelessWidget {
           path: admin_build/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
 
-      # =========================
-      # COMPLETE
-      # =========================
-
       - name: Build Complete
         run: |
-          echo ""
-          echo "=========================================="
-          echo "   SADEE X DIMA BUILD COMPLETE"
-          echo "=========================================="
-          echo ""
-          echo "✅ USER APK READY"
-          echo "✅ ADMIN APK READY"
-          echo ""
-          echo "Check the Artifacts section."
-          echo ""
-          echo "=========================================="
+          echo "======================================"
+          echo "SADEE X DIMA BUILD COMPLETE"
+          echo "USER APK  - READY"
+          echo "ADMIN APK - READY"
+          echo "======================================"
