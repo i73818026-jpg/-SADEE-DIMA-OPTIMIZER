@@ -11,6 +11,7 @@ permissions:
 
 jobs:
   build:
+    name: Build User and Admin APK
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
@@ -24,33 +25,39 @@ jobs:
           channel: stable
           cache: true
 
+      - name: Flutter Version
+        run: flutter --version
+
       - name: Find ZIP
         shell: bash
         run: |
           set -e
+
           ZIP_FILE=$(find . -type f -name "*.zip" \
-            -not -path "./extracted_project/*" | head -n 1)
+            -not -path "./extracted_project/*" \
+            | head -n 1)
 
           if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: ZIP not found"
+            echo "ERROR: Project ZIP not found"
             exit 1
           fi
 
           echo "ZIP_FILE=$ZIP_FILE" >> "$GITHUB_ENV"
-          echo "Using: $ZIP_FILE"
+          echo "Using ZIP: $ZIP_FILE"
 
       - name: Extract ZIP
         shell: bash
         run: |
           set -e
+
           rm -rf extracted_project
-          mkdir extracted_project
+          mkdir -p extracted_project
 
           unzip -q "$ZIP_FILE" -d extracted_project
 
           PUBSPEC=$(find extracted_project \
             -type f \
-            -name pubspec.yaml \
+            -name "pubspec.yaml" \
             -print -quit)
 
           if [ -z "$PUBSPEC" ]; then
@@ -59,33 +66,203 @@ jobs:
           fi
 
           PROJECT_DIR=$(dirname "$PUBSPEC")
+
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-          echo "PROJECT_DIR=$PROJECT_DIR"
+          echo "Project directory:"
+          echo "$PROJECT_DIR"
 
       - name: Verify Project
         shell: bash
         run: |
           set -e
+
           cd "$PROJECT_DIR"
 
           test -f pubspec.yaml
           test -f lib/main_user.dart
           test -f lib/main_admin.dart
 
-          echo "Project OK"
+          echo "Project verification OK"
+
+      - name: Fix OptimizerService notifyOperation
+        shell: bash
+        run: |
+          set -e
+
+          cd "$PROJECT_DIR"
+
+          python3 <<'PY'
+          from pathlib import Path
+
+          path = Path("lib/services/optimizer_service.dart")
+
+          if not path.exists():
+              raise SystemExit(
+                  "ERROR: optimizer_service.dart not found"
+              )
+
+          text = path.read_text(encoding="utf-8")
+
+          if "notifyOperation(" not in text:
+              method = r'''
+            Future<void> notifyOperation(
+              String title,
+              String message,
+            ) async {
+              try {
+                await _channel.invokeMethod(
+                  'notifyUser',
+                  <String, dynamic>{
+                    'title': title,
+                    'text': message,
+                  },
+                );
+              } catch (_) {}
+            }
+          '''
+
+              marker = "\n  String formatBytes"
+
+              if marker in text:
+                  text = text.replace(
+                      marker,
+                      "\n" + method + marker,
+                      1,
+                  )
+              else:
+                  pos = text.rfind("\n}")
+
+                  if pos == -1:
+                      raise SystemExit(
+                          "ERROR: Could not find "
+                          "OptimizerService class end"
+                      )
+
+                  text = (
+                      text[:pos]
+                      + "\n"
+                      + method
+                      + text[pos:]
+                  )
+
+              path.write_text(
+                  text,
+                  encoding="utf-8",
+              )
+
+          if "notifyOperation(" not in path.read_text(
+              encoding="utf-8"
+          ):
+              raise SystemExit(
+                  "ERROR: notifyOperation patch failed"
+              )
+
+          print("notifyOperation() FIXED")
+
+      - name: Add Notification Permission
+        shell: bash
+        run: |
+          set -e
+
+          cd "$PROJECT_DIR"
+
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+
+          if [ ! -f "$MANIFEST" ]; then
+            echo "ERROR: AndroidManifest.xml not found"
+            exit 1
+          fi
+
+          if ! grep -q "POST_NOTIFICATIONS" "$MANIFEST"; then
+            sed -i \
+              '2i\    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>' \
+              "$MANIFEST"
+          fi
+
+          echo "POST_NOTIFICATIONS permission OK"
+
+      - name: Check Android Notification Bridge
+        shell: bash
+        run: |
+          set -e
+
+          cd "$PROJECT_DIR"
+
+          MAIN_KOTLIN=$(find android/app/src/main/kotlin \
+            -type f \
+            -name "MainActivity.kt" \
+            -print -quit)
+
+          if [ -z "$MAIN_KOTLIN" ]; then
+            echo "ERROR: MainActivity.kt not found"
+            exit 1
+          fi
+
+          echo "MainActivity:"
+          echo "$MAIN_KOTLIN"
+
+          if grep -q "notifyUser" "$MAIN_KOTLIN"; then
+            echo "Native notifyUser() already exists"
+          else
+            echo "WARNING: Native notifyUser() not found"
+            echo "Build will continue"
+          fi
+
+      - name: Repair PNG
+        shell: bash
+        run: |
+          set -e
+
+          cd "$PROJECT_DIR"
+
+          python3 -m pip install --quiet pillow
+
+          python3 <<'PY'
+          from pathlib import Path
+          from PIL import Image
+
+          root = Path(
+              "android/app/src/main/res"
+          )
+
+          if not root.exists():
+              print("Android resources not found")
+              raise SystemExit(0)
+
+          for path in root.rglob("*.png"):
+              try:
+                  image = Image.open(path)
+                  image.load()
+                  image.convert("RGBA").save(
+                      path,
+                      format="PNG"
+                  )
+                  print("PNG OK:", path)
+              except Exception as error:
+                  print(
+                      "PNG skipped:",
+                      path,
+                      error
+                  )
+          PY
 
       - name: Fix Gradle Versions
         shell: bash
         run: |
           set -e
+
           cd "$PROJECT_DIR"
 
-          sed -i \
-            's/gradle-[0-9.]*-all\.zip/gradle-8.14.5-all.zip/g' \
-            android/gradle/wrapper/gradle-wrapper.properties || true
+          GRADLE_FILE="android/gradle/wrapper/gradle-wrapper.properties"
 
-          if [ -f android/build.gradle ]; then
+          if [ -f "$GRADLE_FILE" ]; then
+            sed -i \
+              's/gradle-[0-9.]*-all\.zip/gradle-8.14.5-all.zip/g' \
+              "$GRADLE_FILE"
+          fi
+
+          if [ -f "android/build.gradle" ]; then
             sed -i \
               's/com.android.tools.build:gradle:[0-9.]*/com.android.tools.build:gradle:8.11.1/g' \
               android/build.gradle || true
@@ -95,60 +272,21 @@ jobs:
               android/build.gradle || true
           fi
 
-          if [ -f android/settings.gradle ]; then
-            sed -i \
-              's/\(com.android.application.*version[[:space:]]*["'\'']\)[0-9.]*\(["'\'']\)/\18.11.1\2/g' \
-              android/settings.gradle || true
+          echo "Android build versions checked"
 
-            sed -i \
-              's/\(org.jetbrains.kotlin.android.*version[[:space:]]*["'\'']\)[0-9.]*\(["'\'']\)/\12.2.20\2/g' \
-              android/settings.gradle || true
-          fi
-
-          echo "Gradle versions checked"
-
-      - name: Add Notification Permission
+      - name: Check Product Flavors
         shell: bash
         run: |
           set -e
+
           cd "$PROJECT_DIR"
 
-          MANIFEST="android/app/src/main/AndroidManifest.xml"
-
-          if [ -f "$MANIFEST" ]; then
-            if ! grep -q "POST_NOTIFICATIONS" "$MANIFEST"; then
-              sed -i \
-                '2i\    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>' \
-                "$MANIFEST"
-            fi
+          if ! grep -Rqs "productFlavors" android/app; then
+            echo "ERROR: productFlavors not found"
+            exit 1
           fi
 
-          echo "Notification permission checked"
-
-      - name: Repair PNG
-        shell: bash
-        run: |
-          set -e
-          cd "$PROJECT_DIR"
-
-          python3 -m pip install --quiet pillow
-
-          python3 -c '
-          from pathlib import Path
-          from PIL import Image
-
-          root = Path("android/app/src/main/res")
-
-          if root.exists():
-              for p in root.rglob("*.png"):
-                  try:
-                      im = Image.open(p)
-                      im.load()
-                      im.convert("RGBA").save(p, "PNG")
-                      print("Fixed:", p)
-                  except Exception as e:
-                      print("Skip:", p, e)
-          '
+          echo "productFlavors OK"
 
       - name: Flutter Clean
         shell: bash
@@ -168,10 +306,23 @@ jobs:
           cd "$PROJECT_DIR"
           dart format lib
 
-      - name: Analyze
+      - name: Verify notifyOperation
+        shell: bash
+        run: |
+          set -e
+
+          cd "$PROJECT_DIR"
+
+          grep -Fq "notifyOperation" \
+            lib/services/optimizer_service.dart
+
+          echo "notifyOperation verified"
+
+      - name: Flutter Analyze
         shell: bash
         run: |
           cd "$PROJECT_DIR"
+
           flutter analyze \
             --no-fatal-infos \
             --no-fatal-warnings
@@ -180,6 +331,7 @@ jobs:
         shell: bash
         run: |
           set -e
+
           cd "$PROJECT_DIR"
 
           flutter build apk \
@@ -191,6 +343,7 @@ jobs:
         shell: bash
         run: |
           set -e
+
           cd "$PROJECT_DIR"
 
           flutter build apk \
@@ -210,6 +363,7 @@ jobs:
             -name "*.apk" \
             -exec cp {} apk_output/ \;
 
+          echo "APK files:"
           ls -lh apk_output
 
       - name: Upload APKs
