@@ -12,15 +12,15 @@ jobs:
 
     steps:
 
-      # ----------------------------------------
-      # 1. Checkout
-      # ----------------------------------------
+      # ==========================================
+      # CHECKOUT
+      # ==========================================
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ----------------------------------------
-      # 2. Find ZIP
-      # ----------------------------------------
+      # ==========================================
+      # FIND ZIP
+      # ==========================================
       - name: Find ZIP
         run: |
           ZIP_FILE=$(find . -maxdepth 3 -type f \
@@ -34,12 +34,12 @@ jobs:
 
           echo "ZIP_FILE=$ZIP_FILE" >> "$GITHUB_ENV"
 
-          echo "✅ ZIP:"
+          echo "✅ ZIP found:"
           echo "$ZIP_FILE"
 
-      # ----------------------------------------
-      # 3. Extract ZIP
-      # ----------------------------------------
+      # ==========================================
+      # EXTRACT ZIP
+      # ==========================================
       - name: Extract ZIP
         run: |
           rm -rf extracted
@@ -49,9 +49,9 @@ jobs:
 
           echo "✅ ZIP extracted"
 
-      # ----------------------------------------
-      # 4. Find Flutter project
-      # ----------------------------------------
+      # ==========================================
+      # FIND FLUTTER PROJECT
+      # ==========================================
       - name: Find Flutter project
         run: |
           PUBSPEC=$(find extracted \
@@ -61,7 +61,7 @@ jobs:
 
           if [ -z "$PUBSPEC" ]; then
             echo "❌ pubspec.yaml not found"
-            find extracted -maxdepth 4 -type f | head -200
+            find extracted -maxdepth 5 -type f | head -200
             exit 1
           fi
 
@@ -72,18 +72,18 @@ jobs:
           echo "✅ Flutter project:"
           echo "$PROJECT_DIR"
 
-      # ----------------------------------------
-      # 5. Java 17
-      # ----------------------------------------
+      # ==========================================
+      # JAVA 17
+      # ==========================================
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
-      # ----------------------------------------
-      # 6. Flutter
-      # ----------------------------------------
+      # ==========================================
+      # FLUTTER
+      # ==========================================
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
@@ -91,25 +91,28 @@ jobs:
           channel: stable
           cache: true
 
-      # ----------------------------------------
-      # 7. Versions
-      # ----------------------------------------
+      # ==========================================
+      # CHECK JAVA / FLUTTER
+      # ==========================================
       - name: Check versions
         run: |
-          echo "===== Flutter ====="
+          echo "=============================="
+          echo "FLUTTER"
+          echo "=============================="
           flutter --version
 
           echo ""
-          echo "===== Java ====="
+          echo "=============================="
+          echo "JAVA"
+          echo "=============================="
           java -version
 
           echo ""
-          echo "===== JAVA_HOME ====="
-          echo "$JAVA_HOME"
+          echo "JAVA_HOME=$JAVA_HOME"
 
-      # ----------------------------------------
-      # 8. Upgrade AGP
-      # ----------------------------------------
+      # ==========================================
+      # UPDATE AGP
+      # ==========================================
       - name: Update Android Gradle Plugin
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
@@ -137,9 +140,11 @@ jobs:
 
           fi
 
-      # ----------------------------------------
-      # 9. Gradle 8.11.1
-      # ----------------------------------------
+          echo "✅ AGP update completed"
+
+      # ==========================================
+      # UPDATE GRADLE
+      # ==========================================
       - name: Update Gradle wrapper
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
@@ -155,96 +160,164 @@ jobs:
 
           fi
 
-      # ----------------------------------------
-      # 10. Fix JVM target ONLY
-      # ----------------------------------------
-      - name: Fix JVM target
+          echo "✅ Gradle update completed"
+
+      # ==========================================
+      # FORCE JAVA 17 + KOTLIN 17
+      # ==========================================
+      - name: Force Java 17 and Kotlin 17
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
           python3 <<'PY'
           from pathlib import Path
+          import re
 
           path = Path("android/app/build.gradle")
 
           if not path.exists():
-              print("⚠️ build.gradle not found")
-              raise SystemExit(0)
+              raise SystemExit("❌ android/app/build.gradle not found")
 
           text = path.read_text()
 
-          text = text.replace(
-              "JavaVersion.VERSION_1_8",
-              "JavaVersion.VERSION_17"
+          print("===== ORIGINAL BUILD.GRADLE =====")
+          print(text)
+
+          # --------------------------------------
+          # Remove existing compileOptions block
+          # --------------------------------------
+          text = re.sub(
+              r'compileOptions\s*\{[^{}]*\}',
+              '',
+              text,
+              flags=re.DOTALL
           )
 
-          text = text.replace(
-              "jvmTarget = '1.8'",
-              "jvmTarget = '17'"
+          # --------------------------------------
+          # Remove existing kotlinOptions block
+          # --------------------------------------
+          text = re.sub(
+              r'kotlinOptions\s*\{[^{}]*\}',
+              '',
+              text,
+              flags=re.DOTALL
           )
 
-          text = text.replace(
-              'jvmTarget = "1.8"',
-              'jvmTarget = "17"'
-          )
+          # --------------------------------------
+          # Add Java 17 compile options
+          # immediately inside android {}
+          # --------------------------------------
+          java_config = """
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
+              }
+          """
+
+          if "android {" in text:
+              text = text.replace(
+                  "android {",
+                  "android {" + java_config,
+                  1
+              )
+          else:
+              raise SystemExit("❌ android {} block not found")
+
+          # --------------------------------------
+          # Add Kotlin JVM 17
+          # --------------------------------------
+          kotlin_config = """
+
+          tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
+              kotlinOptions {
+                  jvmTarget = "17"
+              }
+          }
+          """
+
+          text = text.rstrip() + kotlin_config + "\n"
 
           path.write_text(text)
 
-          print("✅ JVM target fixed")
+          print("")
+          print("======================================")
+          print("✅ JAVA TARGET = 17")
+          print("✅ KOTLIN TARGET = 17")
+          print("======================================")
+
+          print("")
+          print("===== FINAL BUILD.GRADLE =====")
+          print(text)
           PY
 
-      # ----------------------------------------
-      # 11. Pub get
-      # ----------------------------------------
+      # ==========================================
+      # VERIFY JVM CONFIG
+      # ==========================================
+      - name: Verify JVM configuration
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          echo "===== SEARCHING JVM SETTINGS ====="
+
+          grep -n -E \
+            "compileOptions|sourceCompatibility|targetCompatibility|kotlinOptions|jvmTarget" \
+            android/app/build.gradle || true
+
+      # ==========================================
+      # PUB GET
+      # ==========================================
       - name: Flutter pub get
         working-directory: ${{ env.PROJECT_DIR }}
-        run: flutter pub get
+        run: |
+          flutter pub get
 
-      # ----------------------------------------
-      # 12. Analyze
-      # ----------------------------------------
+      # ==========================================
+      # ANALYZE
+      # ==========================================
       - name: Flutter analyze
         working-directory: ${{ env.PROJECT_DIR }}
-        run: flutter analyze || true
+        run: |
+          flutter analyze || true
 
-      # ----------------------------------------
-      # 13. Clean
-      # ----------------------------------------
+      # ==========================================
+      # CLEAN
+      # ==========================================
       - name: Flutter clean
         working-directory: ${{ env.PROJECT_DIR }}
-        run: flutter clean
+        run: |
+          flutter clean
 
-      # ----------------------------------------
-      # 14. Pub get again
-      # ----------------------------------------
+      # ==========================================
+      # PUB GET AGAIN
+      # ==========================================
       - name: Flutter pub get again
         working-directory: ${{ env.PROJECT_DIR }}
-        run: flutter pub get
+        run: |
+          flutter pub get
 
-      # ----------------------------------------
-      # 15. Build APK
-      # ----------------------------------------
+      # ==========================================
+      # BUILD APK
+      # ==========================================
       - name: Build Release APK
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
           flutter build apk --release
 
-      # ----------------------------------------
-      # 16. Find APK
-      # ----------------------------------------
-      - name: Find generated APK
+      # ==========================================
+      # CHECK APK
+      # ==========================================
+      - name: Check APK
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
-          echo "===== APK FILES ====="
+          echo "===== GENERATED APK ====="
 
           find build/app/outputs/flutter-apk \
             -type f \
             -name "*.apk" \
             -exec ls -lh {} \;
 
-      # ----------------------------------------
-      # 17. Generate signing key
-      # ----------------------------------------
-      - name: Generate temporary signing key
+      # ==========================================
+      # GENERATE TEMPORARY KEY
+      # ==========================================
+      - name: Generate signing key
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
           keytool -genkeypair \
@@ -260,9 +333,9 @@ jobs:
 
           echo "✅ Signing key created"
 
-      # ----------------------------------------
-      # 18. Locate apksigner
-      # ----------------------------------------
+      # ==========================================
+      # FIND APKSIGNER
+      # ==========================================
       - name: Find apksigner
         run: |
           APKSIGNER=$(find "$ANDROID_HOME" \
@@ -277,24 +350,21 @@ jobs:
 
           echo "APKSIGNER=$APKSIGNER" >> "$GITHUB_ENV"
 
-          echo "✅ apksigner:"
+          echo "✅ apksigner found:"
           echo "$APKSIGNER"
 
-      # ----------------------------------------
-      # 19. Sign APK
-      # ----------------------------------------
+      # ==========================================
+      # SIGN APK
+      # ==========================================
       - name: Sign APK
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
           APK="build/app/outputs/flutter-apk/app-release.apk"
 
           if [ ! -f "$APK" ]; then
-            echo "❌ APK not found:"
-            echo "$APK"
+            echo "❌ APK not found"
             exit 1
           fi
-
-          echo "Signing APK..."
 
           "$APKSIGNER" sign \
             --ks release-key.jks \
@@ -306,18 +376,13 @@ jobs:
 
           echo "✅ APK signed"
 
-      # ----------------------------------------
-      # 20. Verify APK
-      # ----------------------------------------
-      - name: Verify signed APK
+      # ==========================================
+      # VERIFY SIGNATURE
+      # ==========================================
+      - name: Verify APK signature
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
           SIGNED_APK="build/app/outputs/flutter-apk/sadee-x-dima-optimizer.apk"
-
-          if [ ! -f "$SIGNED_APK" ]; then
-            echo "❌ Signed APK not found"
-            exit 1
-          fi
 
           "$APKSIGNER" verify --verbose "$SIGNED_APK"
 
@@ -328,9 +393,9 @@ jobs:
 
           ls -lh "$SIGNED_APK"
 
-      # ----------------------------------------
-      # 21. Upload final APK
-      # ----------------------------------------
+      # ==========================================
+      # UPLOAD FINAL APK
+      # ==========================================
       - name: Upload final APK
         uses: actions/upload-artifact@v4
         with:
