@@ -2,86 +2,562 @@ name: SADEE X DIMA Build
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
+
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Find ZIP
+        shell: bash
         run: |
-          ZIP=$(find . -type f -iname '*.zip' ! -path './.git/*' | head -1)
-          test -n "$ZIP"
+          set -e
+          ZIP=$(find . -type f -iname "*.zip" ! -path "./.git/*" | head -n 1)
+
+          if [ -z "$ZIP" ]; then
+            echo "ERROR: ZIP file not found"
+            exit 1
+          fi
+
+          echo "ZIP FOUND: $ZIP"
           echo "ZIP=$ZIP" >> "$GITHUB_ENV"
 
       - name: Extract ZIP
+        shell: bash
         run: |
+          set -e
           rm -rf extracted
-          mkdir extracted
+          mkdir -p extracted
           unzip -o "$ZIP" -d extracted
 
-      - name: Find projects
+          echo "ZIP extracted"
+
+      - name: Find User Project
+        shell: bash
         run: |
-          USER=$(find extracted -type f -path '*/user/pubspec.yaml' -exec dirname {} \; | head -1)
-          ADMIN=$(find extracted -type f -path '*/admin/pubspec.yaml' -exec dirname {} \; | head -1)
+          set -e
 
-          test -n "$USER"
-          test -n "$ADMIN"
+          USER_DIR=$(find extracted -type f -path "*/user/pubspec.yaml" -exec dirname {} \; | head -n 1)
 
-          echo "USER=$USER" >> "$GITHUB_ENV"
-          echo "ADMIN=$ADMIN" >> "$GITHUB_ENV"
+          if [ -z "$USER_DIR" ]; then
+            echo "ERROR: user project not found"
+            find extracted -name "pubspec.yaml"
+            exit 1
+          fi
 
-      - name: Java
+          echo "USER_DIR=$USER_DIR" >> "$GITHUB_ENV"
+
+      - name: Find Admin Project
+        shell: bash
+        run: |
+          set -e
+
+          ADMIN_DIR=$(find extracted -type f -path "*/admin/pubspec.yaml" -exec dirname {} \; | head -n 1)
+
+          if [ -z "$ADMIN_DIR" ]; then
+            echo "ERROR: admin project not found"
+            find extracted -name "pubspec.yaml"
+            exit 1
+          fi
+
+          echo "ADMIN_DIR=$ADMIN_DIR" >> "$GITHUB_ENV"
+
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: "17"
 
-      - name: Flutter
+      - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.35.7'
+          flutter-version: "3.35.7"
           channel: stable
+          cache: true
 
-      - name: User project
+      # =========================
+      # USER APP
+      # =========================
+
+      - name: Create User Flutter Project
         run: |
-          flutter create --org com.sadee.xdima --project-name sadee_optimizer_user user_build
-          rm -rf user_build/lib
-          rm -rf user_build/test
-          cp -r "$USER/lib" user_build/lib
-          cp "$USER/pubspec.yaml" user_build/pubspec.yaml
+          flutter create \
+            --org com.sadee.xdima \
+            --project-name sadee_optimizer_user \
+            user_build
 
-      - name: User build
+      - name: Copy User Pubspec
+        run: |
+          cp "$USER_DIR/pubspec.yaml" user_build/pubspec.yaml
+
+      - name: Copy User Config
+        run: |
+          if [ -f "$USER_DIR/lib/config.dart" ]; then
+            cp "$USER_DIR/lib/config.dart" user_build/lib/config.dart
+          else
+            cat > user_build/lib/config.dart <<'EOF'
+const String supabaseUrl =
+    'https://cpmzjplfqggmgeotmtcd.supabase.co';
+
+const String supabaseAnonKey =
+    'sb_publishable_z0kmWe85ybkmBg7bzEtyKA_kMH6WGXW';
+
+const String orderWhatsApp =
+    '94768472404';
+EOF
+          fi
+
+      - name: Create Clean User Main
+        shell: bash
+        run: |
+          cat > user_build/lib/main.dart <<'DART'
+import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'config.dart';
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  await Supabase.initialize(
+    url: supabaseUrl,
+    publishableKey: supabaseAnonKey,
+  );
+
+  runApp(const SadeeApp());
+}
+
+class SadeeApp extends StatelessWidget {
+  const SadeeApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      title: 'SADEE X DIMA',
+      theme: ThemeData.dark(useMaterial3: true),
+      home: const LoginPage(),
+    );
+  }
+}
+
+class LoginPage extends StatefulWidget {
+  const LoginPage({super.key});
+
+  @override
+  State<LoginPage> createState() => _LoginPageState();
+}
+
+class _LoginPageState extends State<LoginPage> {
+  final keyController = TextEditingController();
+  bool loading = false;
+
+  void showMsg(String text) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(text)),
+    );
+  }
+
+  Future<void> buyKey() async {
+    final message = Uri.encodeComponent(
+      'Hello SADEE X DIMA, I want to buy a license key.',
+    );
+
+    final uri = Uri.parse(
+      'https://wa.me/$orderWhatsApp?text=$message',
+    );
+
+    await launchUrl(
+      uri,
+      mode: LaunchMode.externalApplication,
+    );
+  }
+
+  Future<void> login() async {
+    final key = keyController.text.trim().toUpperCase();
+
+    if (key.isEmpty) {
+      showMsg('Enter your license key');
+      return;
+    }
+
+    setState(() {
+      loading = true;
+    });
+
+    try {
+      final row = await Supabase.instance.client
+          .from('license_keys')
+          .select()
+          .eq('key_code', key)
+          .maybeSingle();
+
+      if (row == null) {
+        showMsg('License key not found');
+        return;
+      }
+
+      final status =
+          (row['status'] ?? 'UNUSED').toString().toUpperCase();
+
+      if (status == 'PAUSED') {
+        showMsg('License is paused');
+        return;
+      }
+
+      if (status == 'EXPIRED') {
+        showMsg('License has expired');
+        return;
+      }
+
+      if (status == 'UNUSED') {
+        final days = (row['duration_days'] as num).toInt();
+
+        final expiry = days == -1
+            ? null
+            : DateTime.now()
+                .toUtc()
+                .add(Duration(days: days))
+                .toIso8601String();
+
+        await Supabase.instance.client
+            .from('license_keys')
+            .update({
+          'status': 'ACTIVE',
+          'activated_at':
+              DateTime.now().toUtc().toIso8601String(),
+          'expires_at': expiry,
+        }).eq('key_code', key);
+      }
+
+      if (!mounted) return;
+
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (_) => const DashboardPage(),
+        ),
+      );
+    } catch (e) {
+      showMsg('Connection error');
+    } finally {
+      if (mounted) {
+        setState(() {
+          loading = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.all(22),
+          children: [
+            const SizedBox(height: 45),
+
+            const Icon(
+              Icons.bolt,
+              size: 72,
+              color: Colors.cyan,
+            ),
+
+            const SizedBox(height: 12),
+
+            const Text(
+              'SADEE X DIMA',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 28,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+
+            const Text(
+              'OPTIMIZER',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Colors.cyan,
+                letterSpacing: 4,
+              ),
+            ),
+
+            const SizedBox(height: 30),
+
+            TextField(
+              controller: keyController,
+              decoration: const InputDecoration(
+                labelText: 'License Key',
+                prefixIcon: Icon(Icons.key),
+                border: OutlineInputBorder(),
+              ),
+            ),
+
+            const SizedBox(height: 12),
+
+            SizedBox(
+              height: 52,
+              child: FilledButton(
+                onPressed: loading ? null : login,
+                child: loading
+                    ? const CircularProgressIndicator()
+                    : const Text('LOGIN'),
+              ),
+            ),
+
+            const SizedBox(height: 25),
+
+            const Text(
+              'KEY PRICES',
+              style: TextStyle(
+                color: Colors.cyan,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+
+            const ListTile(
+              title: Text('7 DAYS'),
+              trailing: Text('Rs. 500'),
+            ),
+
+            const ListTile(
+              title: Text('1 MONTH'),
+              trailing: Text('Rs. 1,000'),
+            ),
+
+            const ListTile(
+              title: Text('LIFETIME'),
+              trailing: Text('Rs. 2,200'),
+            ),
+
+            OutlinedButton.icon(
+              onPressed: buyKey,
+              icon: const Icon(Icons.chat),
+              label: const Text('BUY KEY - WHATSAPP'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class DashboardPage extends StatefulWidget {
+  const DashboardPage({super.key});
+
+  @override
+  State<DashboardPage> createState() =>
+      _DashboardPageState();
+}
+
+class _DashboardPageState
+    extends State<DashboardPage> {
+  int index = 0;
+
+  final pages = const [
+    FeaturePage(
+      title: 'HOME',
+      icon: Icons.home,
+      items: [
+        'Optimizer Dashboard',
+        'Gaming Mode',
+        'Game Launcher',
+      ],
+    ),
+    FeaturePage(
+      title: 'OPTIMIZER',
+      icon: Icons.bolt,
+      items: [
+        'RAM Optimization',
+        'Performance Mode',
+        'Background Apps',
+      ],
+    ),
+    FeaturePage(
+      title: 'GAMING',
+      icon: Icons.sports_esports,
+      items: [
+        'Gaming Mode',
+        'Game Launcher',
+        'Gaming Settings',
+      ],
+    ),
+    FeaturePage(
+      title: 'PERFORMANCE',
+      icon: Icons.speed,
+      items: [
+        'RAM Status',
+        'Battery Status',
+        'Storage Status',
+      ],
+    ),
+    FeaturePage(
+      title: 'SETTINGS',
+      icon: Icons.settings,
+      items: [
+        'License',
+        'App Version',
+        'About',
+      ],
+    ),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('SADEE X DIMA'),
+      ),
+      body: pages[index],
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: index,
+        onDestinationSelected: (value) {
+          setState(() {
+            index = value;
+          });
+        },
+        destinations: const [
+          NavigationDestination(
+            icon: Icon(Icons.home),
+            label: 'Home',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.bolt),
+            label: 'Optimize',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.sports_esports),
+            label: 'Gaming',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.speed),
+            label: 'Performance',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.settings),
+            label: 'Settings',
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class FeaturePage extends StatelessWidget {
+  final String title;
+  final IconData icon;
+  final List<String> items;
+
+  const FeaturePage({
+    super.key,
+    required this.title,
+    required this.icon,
+    required this.items,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        Row(
+          children: [
+            Icon(
+              icon,
+              color: Colors.cyan,
+              size: 30,
+            ),
+            const SizedBox(width: 10),
+            Text(
+              title,
+              style: const TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+
+        const SizedBox(height: 14),
+
+        ...items.map(
+          (item) => Card(
+            child: ListTile(
+              leading: const Icon(
+                Icons.check_circle,
+                color: Colors.cyan,
+              ),
+              title: Text(item),
+              trailing: const Icon(
+                Icons.chevron_right,
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+DART
+
+      - name: Build User APK
         working-directory: user_build
         run: |
           flutter pub get
+          dart format lib
+          flutter analyze
           flutter build apk --release
 
-      - name: Admin project
+      # =========================
+      # ADMIN APP
+      # =========================
+
+      - name: Create Admin Flutter Project
         run: |
-          flutter create --org com.sadee.xdima --project-name sadee_optimizer_admin admin_build
+          flutter create \
+            --org com.sadee.xdima \
+            --project-name sadee_optimizer_admin \
+            admin_build
+
+      - name: Copy Admin
+        run: |
           rm -rf admin_build/lib
           rm -rf admin_build/test
-          cp -r "$ADMIN/lib" admin_build/lib
-          cp "$ADMIN/pubspec.yaml" admin_build/pubspec.yaml
 
-      - name: Admin build
+          cp -r "$ADMIN_DIR/lib" admin_build/lib
+          cp "$ADMIN_DIR/pubspec.yaml" admin_build/pubspec.yaml
+
+      - name: Build Admin APK
         working-directory: admin_build
         run: |
           flutter pub get
+          dart format lib
+          flutter analyze
           flutter build apk --release
 
-      - name: User APK
+      # =========================
+      # APK ARTIFACTS
+      # =========================
+
+      - name: Upload User APK
         uses: actions/upload-artifact@v4
         with:
           name: sadee-x-dima-user-apk
           path: user_build/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
 
-      - name: Admin APK
+      - name: Upload Admin APK
         uses: actions/upload-artifact@v4
         with:
           name: sadee-x-dima-admin-apk
           path: admin_build/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
