@@ -12,24 +12,49 @@ jobs:
 
     steps:
 
-      - name: Checkout
+      # ==============================
+      # CHECKOUT
+      # ==============================
+
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Find ZIP
+
+      # ==============================
+      # FIND ZIP
+      # ==============================
+
+      - name: Find ZIP File
         shell: bash
         run: |
           set -e
 
-          ZIP_FILE=$(find . -type f -iname "*.zip" ! -path "./.git/*" | head -n 1)
+          echo "Searching ZIP..."
+
+          ZIP_FILE=$(find . \
+            -type f \
+            -iname "*.zip" \
+            ! -path "./.git/*" \
+            | head -n 1)
 
           if [ -z "$ZIP_FILE" ]; then
             echo "❌ ZIP file not found!"
-            echo "Upload sadee_x_dima_optimizer_v3_user_admin.zip to repository root."
+            echo ""
+            echo "Repository files:"
+            find . -maxdepth 3 -type f \
+              ! -path "./.git/*" | sort
             exit 1
           fi
 
-          echo "✅ ZIP FOUND: $ZIP_FILE"
+          echo "✅ ZIP FOUND:"
+          echo "$ZIP_FILE"
+
           echo "ZIP_FILE=$ZIP_FILE" >> "$GITHUB_ENV"
+
+
+      # ==============================
+      # EXTRACT ZIP
+      # ==============================
 
       - name: Extract ZIP
         shell: bash
@@ -37,48 +62,78 @@ jobs:
           set -e
 
           rm -rf extracted
+
           mkdir -p extracted
+
+          echo "Extracting ZIP..."
 
           unzip -o "$ZIP_FILE" -d extracted
 
+          echo ""
           echo "✅ ZIP extracted"
+          echo ""
+          echo "Extracted files:"
 
-          find extracted -maxdepth 4 -type f | sort
+          find extracted -maxdepth 5 -type f | sort
 
-      - name: Find User and Admin
+
+      # ==============================
+      # FIND USER + ADMIN
+      # ==============================
+
+      - name: Find User And Admin Projects
         shell: bash
         run: |
           set -e
 
-          USER_DIR=$(find extracted -type f \
+          USER_DIR=$(find extracted \
+            -type f \
             -path "*/user/pubspec.yaml" \
-            -exec dirname {} \; | head -n 1)
+            -exec dirname {} \; \
+            | head -n 1)
 
-          ADMIN_DIR=$(find extracted -type f \
+          ADMIN_DIR=$(find extracted \
+            -type f \
             -path "*/admin/pubspec.yaml" \
-            -exec dirname {} \; | head -n 1)
+            -exec dirname {} \; \
+            | head -n 1)
 
           if [ -z "$USER_DIR" ]; then
-            echo "❌ User project not found"
+            echo "❌ User project not found!"
+            find extracted -type f -name "pubspec.yaml"
             exit 1
           fi
 
           if [ -z "$ADMIN_DIR" ]; then
-            echo "❌ Admin project not found"
+            echo "❌ Admin project not found!"
+            find extracted -type f -name "pubspec.yaml"
             exit 1
           fi
 
           echo "USER_DIR=$USER_DIR" >> "$GITHUB_ENV"
           echo "ADMIN_DIR=$ADMIN_DIR" >> "$GITHUB_ENV"
 
-          echo "✅ USER: $USER_DIR"
-          echo "✅ ADMIN: $ADMIN_DIR"
+          echo "✅ USER:"
+          echo "$USER_DIR"
+
+          echo "✅ ADMIN:"
+          echo "$ADMIN_DIR"
+
+
+      # ==============================
+      # JAVA
+      # ==============================
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
+
+
+      # ==============================
+      # FLUTTER
+      # ==============================
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
@@ -87,9 +142,13 @@ jobs:
           channel: stable
           cache: true
 
-      # ---------------- USER ----------------
+
+      # ==============================
+      # CREATE USER PROJECT
+      # ==============================
 
       - name: Create User Flutter Project
+        shell: bash
         run: |
           set -e
 
@@ -104,9 +163,14 @@ jobs:
           cp -r "$USER_DIR/lib" user_build/lib
           cp "$USER_DIR/pubspec.yaml" user_build/pubspec.yaml
 
-          echo "✅ User source copied"
+          echo "✅ User project created"
 
-      - name: Fix User Source
+
+      # ==============================
+      # REPAIR USER MAIN.DART
+      # ==============================
+
+      - name: Repair User Source
         shell: bash
         run: |
           set -e
@@ -115,43 +179,156 @@ jobs:
           from pathlib import Path
 
           p = Path("user_build/lib/main.dart")
+
           s = p.read_text()
 
-          # Fix Supabase API
+          # Supabase API update
           s = s.replace(
               "Supabase.initialize(url: supabaseUrl, anonKey: supabaseAnonKey)",
               "Supabase.initialize(url: supabaseUrl, publishableKey: supabaseAnonKey)"
           )
 
-          # Fix missing closing parenthesis in Home page
-          s = s.replace(
-              "          _launchButton(),\n        ]);",
-              "          _launchButton(),\n        ]));"
-          )
+          # Find ToolPage
+          start = s.find("class ToolPage extends StatelessWidget {")
+
+          if start != -1:
+
+              new_tool_page = r'''
+class ToolPage extends StatelessWidget {
+  final String title;
+  final IconData icon;
+  final List<String> items;
+
+  const ToolPage({
+    super.key,
+    required this.title,
+    required this.icon,
+    required this.items,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: ListView(
+        padding: const EdgeInsets.all(18),
+        children: [
+          Row(
+            children: [
+              Icon(
+                icon,
+                color: accent,
+                size: 30,
+              ),
+              const SizedBox(width: 10),
+              Text(
+                title,
+                style: const TextStyle(
+                  fontSize: 28,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 8),
+
+          const Text(
+            'SADEE X DIMA OPTIMIZER',
+            style: TextStyle(
+              color: Colors.white54,
+            ),
+          ),
+
+          const SizedBox(height: 18),
+
+          ...items.map(
+            (x) => Card(
+              color: card,
+              child: ListTile(
+                leading: const Icon(
+                  Icons.check_circle_outline,
+                  color: accent,
+                ),
+                title: Text(
+                  x,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                trailing: const Icon(
+                  Icons.chevron_right,
+                ),
+                onTap: () {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        '$x is ready for the device-specific implementation.',
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+'''
+
+              s = s[:start] + new_tool_page
 
           p.write_text(s)
 
-          print("✅ User main.dart fixed")
+          print("✅ User main.dart repaired")
           PY
 
-      - name: User Dependencies
+          echo "Checking Dart formatting..."
+
+          cd user_build
+
+          dart format lib
+
+          echo "✅ User source formatted"
+
+
+      # ==============================
+      # USER DEPENDENCIES
+      # ==============================
+
+      - name: User Pub Get
         working-directory: user_build
         run: |
           flutter pub get
 
-      - name: User Analyze
+
+      # ==============================
+      # USER ANALYZE
+      # ==============================
+
+      - name: Analyze User
         working-directory: user_build
         run: |
           flutter analyze
+
+
+      # ==============================
+      # USER APK
+      # ==============================
 
       - name: Build User APK
         working-directory: user_build
         run: |
           flutter build apk --release
 
-      # ---------------- ADMIN ----------------
+
+      # ==============================
+      # CREATE ADMIN PROJECT
+      # ==============================
 
       - name: Create Admin Flutter Project
+        shell: bash
         run: |
           set -e
 
@@ -166,9 +343,14 @@ jobs:
           cp -r "$ADMIN_DIR/lib" admin_build/lib
           cp "$ADMIN_DIR/pubspec.yaml" admin_build/pubspec.yaml
 
-          echo "✅ Admin source copied"
+          echo "✅ Admin project created"
 
-      - name: Fix Admin Source
+
+      # ==============================
+      # REPAIR ADMIN
+      # ==============================
+
+      - name: Repair Admin Source
         shell: bash
         run: |
           set -e
@@ -177,9 +359,9 @@ jobs:
           from pathlib import Path
 
           p = Path("admin_build/lib/main.dart")
+
           s = p.read_text()
 
-          # Fix Supabase API
           s = s.replace(
               "Supabase.initialize(url: supabaseUrl, anonKey: supabaseAnonKey)",
               "Supabase.initialize(url: supabaseUrl, publishableKey: supabaseAnonKey)"
@@ -187,25 +369,49 @@ jobs:
 
           p.write_text(s)
 
-          print("✅ Admin main.dart fixed")
+          print("✅ Admin main.dart repaired")
           PY
 
-      - name: Admin Dependencies
+          cd admin_build
+
+          dart format lib
+
+          echo "✅ Admin source formatted"
+
+
+      # ==============================
+      # ADMIN DEPENDENCIES
+      # ==============================
+
+      - name: Admin Pub Get
         working-directory: admin_build
         run: |
           flutter pub get
 
-      - name: Admin Analyze
+
+      # ==============================
+      # ADMIN ANALYZE
+      # ==============================
+
+      - name: Analyze Admin
         working-directory: admin_build
         run: |
           flutter analyze
+
+
+      # ==============================
+      # ADMIN APK
+      # ==============================
 
       - name: Build Admin APK
         working-directory: admin_build
         run: |
           flutter build apk --release
 
-      # ---------------- APK OUTPUT ----------------
+
+      # ==============================
+      # UPLOAD USER APK
+      # ==============================
 
       - name: Upload User APK
         uses: actions/upload-artifact@v4
@@ -214,6 +420,11 @@ jobs:
           path: user_build/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
 
+
+      # ==============================
+      # UPLOAD ADMIN APK
+      # ==============================
+
       - name: Upload Admin APK
         uses: actions/upload-artifact@v4
         with:
@@ -221,11 +432,20 @@ jobs:
           path: admin_build/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
 
+
+      # ==============================
+      # COMPLETE
+      # ==============================
+
       - name: Build Complete
         run: |
-          echo "======================================"
-          echo "✅ SADEE X DIMA BUILD COMPLETE"
-          echo "======================================"
-          echo "USER APK  : sadee-x-dima-user-apk"
-          echo "ADMIN APK : sadee-x-dima-admin-apk"
-          echo "======================================"
+          echo ""
+          echo "========================================"
+          echo "     SADEE X DIMA BUILD COMPLETE"
+          echo "========================================"
+          echo ""
+          echo "✅ USER APK"
+          echo "✅ ADMIN APK"
+          echo ""
+          echo "Artifacts are ready."
+          echo "========================================"
