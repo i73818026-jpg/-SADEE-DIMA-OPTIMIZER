@@ -18,6 +18,7 @@ jobs:
         shell: bash
         run: |
           set -e
+
           ZIP_FILE="$(find . -maxdepth 1 -type f -iname '*.zip' -print -quit)"
 
           if [ -z "$ZIP_FILE" ]; then
@@ -34,18 +35,20 @@ jobs:
           set -e
 
           rm -rf source
-          mkdir source
+          mkdir -p source
 
           unzip -o "$ZIP_FILE" -d source
+
+          echo "Checking source files..."
 
           test -f source/user/pubspec.yaml
           test -f source/user/lib/main_user.dart
           test -f source/admin/pubspec.yaml
           test -f source/admin/lib/main_admin.dart
 
-          echo "ZIP extracted successfully."
+          echo "Source files OK."
 
-      - name: Setup Java 17
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -70,10 +73,14 @@ jobs:
             user_build
 
           rm -rf user_build/lib
+          rm -rf user_build/test
+
           mkdir -p user_build/lib
 
           cp source/user/lib/main_user.dart user_build/lib/main_user.dart
           cp source/user/pubspec.yaml user_build/pubspec.yaml
+
+          echo "User project prepared."
 
       - name: Create Admin Project
         shell: bash
@@ -87,10 +94,14 @@ jobs:
             admin_build
 
           rm -rf admin_build/lib
+          rm -rf admin_build/test
+
           mkdir -p admin_build/lib
 
           cp source/admin/lib/main_admin.dart admin_build/lib/main_admin.dart
           cp source/admin/pubspec.yaml admin_build/pubspec.yaml
+
+          echo "Admin project prepared."
 
       - name: User Pub Get
         working-directory: user_build
@@ -150,7 +161,7 @@ jobs:
             -t lib/main_admin.dart \
             --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY"
 
-      - name: Rename APKs
+      - name: Rename User APK
         shell: bash
         run: |
           set -e
@@ -158,6 +169,11 @@ jobs:
           cp \
             user_build/build/app/outputs/flutter-apk/app-release.apk \
             user_build/build/app/outputs/flutter-apk/SADEE-X-DIMA-USER.apk
+
+      - name: Rename Admin APK
+        shell: bash
+        run: |
+          set -e
 
           cp \
             admin_build/build/app/outputs/flutter-apk/app-release.apk \
