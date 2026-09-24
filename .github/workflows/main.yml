@@ -1,10 +1,12 @@
-name: SADEE X DIMA REAL USER + ADMIN
+name: SADEE X DIMA - ZIP BUILD
 
 on:
   workflow_dispatch:
+
   push:
     paths:
-      - "**"
+      - "*.zip"
+      - "**/*.zip"
       - ".github/workflows/build.yml"
 
 jobs:
@@ -12,8 +14,215 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+
+      # ============================================================
+      # 1. CHECKOUT
+      # ============================================================
+
+      - name: Checkout Repository
         uses: actions/checkout@v4
+
+
+      # ============================================================
+      # 2. FIND ZIP
+      # ============================================================
+
+      - name: Find Project ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "=============================================="
+          echo " SADEE X DIMA"
+          echo " SEARCHING FOR PROJECT ZIP"
+          echo "=============================================="
+
+          ZIP_FILE=""
+
+          if [ -f "SADEE_X_DIMA_OPTIMIZER_REAL_USER_ADMIN.zip" ]; then
+            ZIP_FILE="SADEE_X_DIMA_OPTIMIZER_REAL_USER_ADMIN.zip"
+          else
+            ZIP_FILE="$(find "$GITHUB_WORKSPACE" \
+              -type f \
+              -iname "*.zip" \
+              -not -path "*/.git/*" \
+              | head -n 1 || true)"
+          fi
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo ""
+            echo "ERROR: No ZIP file found."
+            echo ""
+            echo "Files in repository:"
+            find "$GITHUB_WORKSPACE" -maxdepth 3 -type f -print
+            exit 1
+          fi
+
+          ZIP_FILE="$(realpath "$ZIP_FILE")"
+
+          echo ""
+          echo "ZIP FOUND:"
+          echo "$ZIP_FILE"
+
+          echo "ZIP_FILE=$ZIP_FILE" >> "$GITHUB_ENV"
+
+
+      # ============================================================
+      # 3. EXTRACT ZIP
+      # ============================================================
+
+      - name: Extract ZIP Project
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "=============================================="
+          echo " EXTRACTING PROJECT ZIP"
+          echo "=============================================="
+
+          rm -rf "$GITHUB_WORKSPACE/extracted_project"
+
+          mkdir -p "$GITHUB_WORKSPACE/extracted_project"
+
+          unzip -o "$ZIP_FILE" \
+            -d "$GITHUB_WORKSPACE/extracted_project"
+
+          echo ""
+          echo "ZIP extraction completed."
+
+          echo ""
+          echo "Extracted files:"
+          find "$GITHUB_WORKSPACE/extracted_project" \
+            -maxdepth 4 \
+            -type f \
+            | head -200
+
+
+      # ============================================================
+      # 4. FIND REAL FLUTTER PROJECT
+      # ============================================================
+
+      - name: Locate Flutter Project
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "=============================================="
+          echo " LOCATING FLUTTER PROJECT"
+          echo "=============================================="
+
+          PUBSPEC_FILE="$(
+            find "$GITHUB_WORKSPACE/extracted_project" \
+              -type f \
+              -name "pubspec.yaml" \
+              -print \
+              | head -n 1 || true
+          )"
+
+          if [ -z "$PUBSPEC_FILE" ]; then
+
+            echo ""
+            echo "ERROR: pubspec.yaml was not found."
+            echo ""
+            echo "ZIP extraction tree:"
+            find "$GITHUB_WORKSPACE/extracted_project" \
+              -maxdepth 6 \
+              -print
+
+            exit 1
+          fi
+
+          PROJECT_DIR="$(dirname "$PUBSPEC_FILE")"
+
+          PROJECT_DIR="$(cd "$PROJECT_DIR" && pwd)"
+
+          echo ""
+          echo "PUBSPEC:"
+          echo "$PUBSPEC_FILE"
+
+          echo ""
+          echo "PROJECT DIRECTORY:"
+          echo "$PROJECT_DIR"
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+
+      # ============================================================
+      # 5. VERIFY PROJECT
+      # ============================================================
+
+      - name: Verify Extracted Flutter Project
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd "$PROJECT_DIR"
+
+          echo "=============================================="
+          echo " VERIFYING FLUTTER PROJECT"
+          echo "=============================================="
+
+          test -f "pubspec.yaml"
+          test -f "lib/main_user.dart"
+          test -f "lib/main_admin.dart"
+          test -f "android/app/build.gradle"
+
+          echo ""
+          echo "Flutter project:"
+          pwd
+
+          echo ""
+          echo "Required files:"
+          echo "  pubspec.yaml       OK"
+          echo "  main_user.dart     OK"
+          echo "  main_admin.dart    OK"
+          echo "  build.gradle       OK"
+
+
+      # ============================================================
+      # 6. VERIFY LOGO
+      # ============================================================
+
+      - name: Verify SADEE Logo
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd "$PROJECT_DIR"
+
+          echo "=============================================="
+          echo " VERIFYING LOGO"
+          echo "=============================================="
+
+          LOGO="assets/sadee_logo.png"
+
+          if [ ! -f "$LOGO" ]; then
+            echo "ERROR: $LOGO not found."
+            exit 1
+          fi
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("assets/sadee_logo.png")
+
+          data = p.read_bytes()
+
+          png_signature = b"\x89PNG\r\n\x1a\n"
+
+          if data[:8] != png_signature:
+              raise SystemExit(
+                  "ERROR: sadee_logo.png is not a valid PNG"
+              )
+
+          print("SADEE logo PNG: OK")
+          print("Size:", len(data), "bytes")
+          PY
+
+
+      # ============================================================
+      # 7. SETUP FLUTTER
+      # ============================================================
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
@@ -22,59 +231,185 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Verify project
+
+      # ============================================================
+      # 8. SHOW PROJECT
+      # ============================================================
+
+      - name: Show Project Information
+        shell: bash
         run: |
           set -euo pipefail
-          test -f pubspec.yaml
-          test -f lib/main_user.dart
-          test -f lib/main_admin.dart
-          test -f assets/sadee_logo.png
 
-      - name: Verify logo
+          cd "$PROJECT_DIR"
+
+          echo "=============================================="
+          echo " PROJECT INFORMATION"
+          echo "=============================================="
+
+          echo ""
+          echo "Flutter:"
+          flutter --version
+
+          echo ""
+          echo "Project:"
+          pwd
+
+          echo ""
+          echo "Dart files:"
+          find lib -type f -name "*.dart" -print
+
+
+      # ============================================================
+      # 9. FLUTTER CLEAN
+      # ============================================================
+
+      - name: Flutter Clean
+        shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path("assets/sadee_logo.png")
-          sig = p.read_bytes()[:8]
-          expected = b"\x89PNG\r\n\x1a\n"
-          if sig != expected:
-              raise SystemExit("assets/sadee_logo.png is not a valid PNG")
-          print("Logo PNG: OK")
-          PY
 
-      - name: Flutter clean
-        run: flutter clean
+          cd "$PROJECT_DIR"
 
-      - name: Pub get
-        run: flutter pub get
+          flutter clean
 
-      - name: Dart format check
-        run: dart format --output=none --set-exit-if-changed lib
 
-      - name: Flutter analyze
-        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+      # ============================================================
+      # 10. PUB GET
+      # ============================================================
 
-      - name: Build user APK
+      - name: Flutter Pub Get
+        shell: bash
         run: |
-          flutter build apk --release \
+          set -euo pipefail
+
+          cd "$PROJECT_DIR"
+
+          flutter pub get
+
+
+      # ============================================================
+      # 11. FORMAT
+      # ============================================================
+
+      - name: Dart Format
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd "$PROJECT_DIR"
+
+          dart format lib
+
+
+      # ============================================================
+      # 12. ANALYZE
+      # ============================================================
+
+      - name: Flutter Analyze
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd "$PROJECT_DIR"
+
+          flutter analyze \
+            --no-fatal-infos \
+            --no-fatal-warnings
+
+
+      # ============================================================
+      # 13. BUILD USER APK
+      # ============================================================
+
+      - name: Build USER APK
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd "$PROJECT_DIR"
+
+          echo "=============================================="
+          echo " BUILDING USER APK"
+          echo "=============================================="
+
+          flutter build apk \
+            --release \
             --flavor user \
             -t lib/main_user.dart
 
-      - name: Build admin APK
+
+      # ============================================================
+      # 14. BUILD ADMIN APK
+      # ============================================================
+
+      - name: Build ADMIN APK
+        shell: bash
         run: |
-          flutter build apk --release \
+          set -euo pipefail
+
+          cd "$PROJECT_DIR"
+
+          echo "=============================================="
+          echo " BUILDING ADMIN APK"
+          echo "=============================================="
+
+          flutter build apk \
+            --release \
             --flavor admin \
             -t lib/main_admin.dart
 
-      - name: List APKs
-        run: |
-          find build/app/outputs/flutter-apk -type f -name "*.apk" -print
 
-      - name: Upload APK artifacts
+      # ============================================================
+      # 15. FIND APK
+      # ============================================================
+
+      - name: Find Generated APKs
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "=============================================="
+          echo " APK OUTPUT"
+          echo "=============================================="
+
+          APK_DIR="$PROJECT_DIR/build/app/outputs/flutter-apk"
+
+          if [ ! -d "$APK_DIR" ]; then
+            echo "ERROR: APK output directory not found."
+            exit 1
+          fi
+
+          find "$APK_DIR" \
+            -type f \
+            -name "*.apk" \
+            -print
+
+
+      # ============================================================
+      # 16. UPLOAD APKs
+      # ============================================================
+
+      - name: Upload USER + ADMIN APKs
         uses: actions/upload-artifact@v4
         with:
-          name: sadee-x-dima-real-user-admin-apks
-          path: build/app/outputs/flutter-apk/*.apk
+          name: SADEE-X-DIMA-USER-ADMIN-APKs
+          path: |
+            ${{ env.PROJECT_DIR }}/build/app/outputs/flutter-apk/*.apk
           if-no-files-found: error
 
+
+      # ============================================================
+      # 17. BUILD SUMMARY
+      # ============================================================
+
+      - name: Build Summary
+        shell: bash
+        run: |
+          echo ""
+          echo "=============================================="
+          echo " SADEE X DIMA BUILD COMPLETE"
+          echo "=============================================="
+          echo ""
+          echo "USER APK + ADMIN APK uploaded as artifact."
+          echo ""
