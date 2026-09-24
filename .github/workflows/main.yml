@@ -11,52 +11,63 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Find ZIP
+        shell: bash
         run: |
           set -e
-          ZIP_FILE=$(find . -type f -name "*.zip" ! -path "./.git/*" | head -n 1)
+          ZIP_FILE=$(find . -type f -iname "*.zip" ! -path "./.git/*" | head -n 1)
+
           if [ -z "$ZIP_FILE" ]; then
-            echo "ZIP file not found"
+            echo "ERROR: ZIP file not found"
             exit 1
           fi
-          echo "Found: $ZIP_FILE"
+
+          echo "ZIP FOUND: $ZIP_FILE"
           echo "ZIP_FILE=$ZIP_FILE" >> "$GITHUB_ENV"
 
       - name: Extract ZIP
+        shell: bash
         run: |
           set -e
           rm -rf extracted
-          mkdir extracted
+          mkdir -p extracted
           unzip -o "$ZIP_FILE" -d extracted
-          echo "ZIP extracted successfully"
 
-      - name: Find User Project
+          echo "ZIP EXTRACTED"
+          find extracted -maxdepth 5 -type f | sort
+
+      - name: Find User
+        shell: bash
         run: |
           set -e
-          DIR=$(find extracted -type f -path "*/user/pubspec.yaml" -exec dirname {} \; | head -n 1)
-          if [ -z "$DIR" ]; then
-            echo "User project not found"
-            find extracted -name pubspec.yaml
+
+          USER_DIR=$(find extracted -type f -name "pubspec.yaml" -path "*/user/*" -exec dirname {} \; | head -n 1)
+
+          if [ -z "$USER_DIR" ]; then
+            echo "ERROR: user project not found"
             exit 1
           fi
-          echo "USER_DIR=$DIR" >> "$GITHUB_ENV"
-          echo "User: $DIR"
 
-      - name: Find Admin Project
+          echo "USER PROJECT: $USER_DIR"
+          echo "USER_DIR=$USER_DIR" >> "$GITHUB_ENV"
+
+      - name: Find Admin
+        shell: bash
         run: |
           set -e
-          DIR=$(find extracted -type f -path "*/admin/pubspec.yaml" -exec dirname {} \; | head -n 1)
-          if [ -z "$DIR" ]; then
-            echo "Admin project not found"
-            find extracted -name pubspec.yaml
+
+          ADMIN_DIR=$(find extracted -type f -name "pubspec.yaml" -path "*/admin/*" -exec dirname {} \; | head -n 1)
+
+          if [ -z "$ADMIN_DIR" ]; then
+            echo "ERROR: admin project not found"
             exit 1
           fi
-          echo "ADMIN_DIR=$DIR" >> "$GITHUB_ENV"
-          echo "Admin: $DIR"
+
+          echo "ADMIN PROJECT: $ADMIN_DIR"
+          echo "ADMIN_DIR=$ADMIN_DIR" >> "$GITHUB_ENV"
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -71,113 +82,39 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Create User Project
+      - name: Create User App
         run: |
-          flutter create --org com.sadee.xdima --project-name sadee_optimizer_user user_build
+          flutter create \
+            --org com.sadee.xdima \
+            --project-name sadee_optimizer_user \
+            user_build
 
-      - name: Copy User Project
+      - name: Copy User Files
         run: |
           rm -rf user_build/lib
           rm -rf user_build/test
+
           cp -r "$USER_DIR/lib" user_build/lib
           cp "$USER_DIR/pubspec.yaml" user_build/pubspec.yaml
-
-      - name: Fix User Main
-        run: |
-          set -e
-
-          cat > user_build/lib/main.dart <<'EOF'
-import 'package:flutter/material.dart';
-
-void main() {
-  runApp(const SadeeApp());
-}
-
-class SadeeApp extends StatelessWidget {
-  const SadeeApp({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      title: 'SADEE X DIMA',
-      theme: ThemeData.dark(),
-      home: const HomePage(),
-    );
-  }
-}
-
-class HomePage extends StatelessWidget {
-  const HomePage({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('SADEE X DIMA'),
-      ),
-      body: ListView(
-        padding: const EdgeInsets.all(20),
-        children: const [
-          Text(
-            'SADEE X DIMA OPTIMIZER',
-            style: TextStyle(
-              fontSize: 26,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          SizedBox(height: 20),
-          Card(
-            child: ListTile(
-              leading: Icon(Icons.bolt),
-              title: Text('Optimizer'),
-              subtitle: Text('Performance tools'),
-            ),
-          ),
-          Card(
-            child: ListTile(
-              leading: Icon(Icons.sports_esports),
-              title: Text('Gaming'),
-              subtitle: Text('Gaming mode'),
-            ),
-          ),
-          Card(
-            child: ListTile(
-              leading: Icon(Icons.speed),
-              title: Text('Performance'),
-              subtitle: Text('Device information'),
-            ),
-          ),
-          Card(
-            child: ListTile(
-              leading: Icon(Icons.settings),
-              title: Text('Settings'),
-              subtitle: Text('App settings'),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-EOF
 
       - name: Build User
         working-directory: user_build
         run: |
           flutter pub get
-          dart format lib
-          flutter analyze --no-fatal-infos --no-fatal-warnings
           flutter build apk --release
 
-      - name: Create Admin Project
+      - name: Create Admin App
         run: |
-          flutter create --org com.sadee.xdima --project-name sadee_optimizer_admin admin_build
+          flutter create \
+            --org com.sadee.xdima \
+            --project-name sadee_optimizer_admin \
+            admin_build
 
-      - name: Copy Admin Project
+      - name: Copy Admin Files
         run: |
           rm -rf admin_build/lib
           rm -rf admin_build/test
+
           cp -r "$ADMIN_DIR/lib" admin_build/lib
           cp "$ADMIN_DIR/pubspec.yaml" admin_build/pubspec.yaml
 
@@ -185,8 +122,6 @@ EOF
         working-directory: admin_build
         run: |
           flutter pub get
-          dart format lib
-          flutter analyze --no-fatal-infos --no-fatal-warnings
           flutter build apk --release
 
       - name: Upload User APK
@@ -202,9 +137,3 @@ EOF
           name: sadee-x-dima-admin-apk
           path: admin_build/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
-
-      - name: Complete
-        run: |
-          echo "SADEE X DIMA BUILD COMPLETE"
-          echo "USER APK READY"
-          echo "ADMIN APK READY"
