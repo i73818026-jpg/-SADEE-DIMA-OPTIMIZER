@@ -35,20 +35,16 @@ jobs:
 
       - name: Find Flutter project
         run: |
-          echo "🔎 Searching for pubspec.yaml..."
-
           PUBSPEC=$(find extracted -type f -name "pubspec.yaml" | head -n 1)
 
           if [ -z "$PUBSPEC" ]; then
-            echo "❌ pubspec.yaml not found inside ZIP"
-            echo "ZIP contents:"
-            find extracted -maxdepth 4 -type f | head -100
+            echo "❌ pubspec.yaml not found"
             exit 1
           fi
 
           PROJECT_DIR=$(dirname "$PUBSPEC")
 
-          echo "✅ Flutter project found:"
+          echo "✅ Flutter project:"
           echo "$PROJECT_DIR"
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
@@ -63,6 +59,27 @@ jobs:
       - name: Flutter version
         run: flutter --version
 
+      - name: Upgrade Android Gradle Plugin
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          if [ -f android/settings.gradle ]; then
+            sed -i 's/com.android.application" version "[^"]*"/com.android.application" version "8.9.1"/g' android/settings.gradle
+            sed -i 's/com.android.library" version "[^"]*"/com.android.library" version "8.9.1"/g' android/settings.gradle
+          fi
+
+          if [ -f android/settings.gradle.kts ]; then
+            sed -i 's/id("com.android.application") version "[^"]*"/id("com.android.application") version "8.9.1"/g' android/settings.gradle.kts
+            sed -i 's/id("com.android.library") version "[^"]*"/id("com.android.library") version "8.9.1"/g' android/settings.gradle.kts
+          fi
+
+      - name: Update Gradle wrapper
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          if [ -f android/gradle/wrapper/gradle-wrapper.properties ]; then
+            sed -i 's/gradle-[0-9.]*-all.zip/gradle-8.11.1-all.zip/g' android/gradle/wrapper/gradle-wrapper.properties
+            sed -i 's/gradle-[0-9.]*-bin.zip/gradle-8.11.1-bin.zip/g' android/gradle/wrapper/gradle-wrapper.properties
+          fi
+
       - name: Flutter pub get
         working-directory: ${{ env.PROJECT_DIR }}
         run: flutter pub get
@@ -70,6 +87,14 @@ jobs:
       - name: Flutter analyze
         working-directory: ${{ env.PROJECT_DIR }}
         run: flutter analyze || true
+
+      - name: Clean Flutter
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: flutter clean
+
+      - name: Flutter pub get again
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: flutter pub get
 
       - name: Build APK
         working-directory: ${{ env.PROJECT_DIR }}
