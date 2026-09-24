@@ -1,4 +1,4 @@
-name: Build Sadee X Dima Apps
+name: Build SADEE X DIMA Apps
 
 on:
   workflow_dispatch:
@@ -6,12 +6,12 @@ on:
     branches: [main]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
-    name: Build User + Admin APK
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -22,72 +22,155 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Locate Flutter project
+      - name: Prepare Flutter project
         shell: bash
         run: |
           set -euo pipefail
-          if [ -f "$GITHUB_WORKSPACE/pubspec.yaml" ]; then
-            PROJECT_DIR="$GITHUB_WORKSPACE"
+
+          ROOT="$GITHUB_WORKSPACE"
+          WORK="$ROOT/.build_project"
+          rm -rf "$WORK"
+          mkdir -p "$WORK"
+
+          # 1) If the repository itself is a Flutter project, use it.
+          if [ -f "$ROOT/pubspec.yaml" ]; then
+            PROJECT_DIR="$ROOT"
           else
-            FOUND="$(find "$GITHUB_WORKSPACE" -type f -name pubspec.yaml -not -path '*/.git/*' -print | head -n 1)"
-            [ -n "$FOUND" ] || { echo 'ERROR: pubspec.yaml not found'; exit 1; }
+            # 2) Otherwise extract the project ZIP.
+            ZIP_FILE=""
+            for candidate in \
+              "$ROOT/SADEE_X_DIMA_OPTIMIZER_REAL_CYBER_V7.zip" \
+              "$ROOT/SADEE_X_DIMA_OPTIMIZER_V7.zip" \
+              "$ROOT"/*.zip; do
+              if [ -f "$candidate" ]; then
+                ZIP_FILE="$candidate"
+                break
+              fi
+            done
+
+            if [ -z "$ZIP_FILE" ]; then
+              echo "ERROR: Flutter project not found and no ZIP file exists."
+              echo "Repository files:"
+              find "$ROOT" -maxdepth 3 -type f -print | sort | head -200
+              exit 1
+            fi
+
+            echo "Using ZIP: $ZIP_FILE"
+            unzip -q -o "$ZIP_FILE" -d "$WORK"
+
+            # Find pubspec at any depth. This handles ZIPs containing
+            # either the Flutter project root or one extra wrapper folder.
+            FOUND="$(find "$WORK" -type f -name pubspec.yaml -not -path '*/.git/*' -print | head -n 1 || true)"
+
+            if [ -z "$FOUND" ]; then
+              echo "ERROR: pubspec.yaml not found after extracting ZIP."
+              echo "ZIP contents:"
+              unzip -l "$ZIP_FILE" | head -200
+              exit 1
+            fi
+
             PROJECT_DIR="$(dirname "$FOUND")"
           fi
+
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
           echo "Flutter project: $PROJECT_DIR"
+          test -f "$PROJECT_DIR/pubspec.yaml"
 
-      - name: Verify source
+      - name: Verify Flutter project
         shell: bash
         run: |
           set -euo pipefail
           cd "$PROJECT_DIR"
-          for f in pubspec.yaml lib/main_user.dart lib/main_admin.dart lib/config.dart lib/services/key_service.dart lib/services/optimizer_service.dart lib/screens/license_gate.dart lib/screens/user_home.dart lib/screens/admin_home.dart android/app/build.gradle; do
+          for f in \
+            pubspec.yaml \
+            lib/main_user.dart \
+            lib/main_admin.dart \
+            lib/config.dart \
+            lib/services/key_service.dart \
+            lib/services/optimizer_service.dart \
+            lib/screens/license_gate.dart \
+            lib/screens/user_home.dart \
+            lib/screens/admin_home.dart \
+            android/app/build.gradle; do
             test -f "$f" || { echo "MISSING: $f"; exit 1; }
           done
+          echo "Flutter project verified successfully."
 
       - name: Stabilize Android toolchain
         shell: bash
         run: |
           set -euo pipefail
           cd "$PROJECT_DIR"
-          sed -i 's#distributionUrl=.*#distributionUrl=https\://services.gradle.org/distributions/gradle-8.14.5-bin.zip#' android/gradle/wrapper/gradle-wrapper.properties
-          sed -i 's/id "com.android.application" version "[^"]*"/id "com.android.application" version "8.11.1"/' android/settings.gradle || true
-          sed -i 's/id "org.jetbrains.kotlin.android" version "[^"]*"/id "org.jetbrains.kotlin.android" version "2.2.20"/' android/settings.gradle || true
 
-      - name: Flutter pub get
-        working-directory: ${{ env.PROJECT_DIR }}
-        run: flutter pub get
+          if [ -f android/gradle/wrapper/gradle-wrapper.properties ]; then
+            sed -i 's#distributionUrl=.*#distributionUrl=https\\://services.gradle.org/distributions/gradle-8.14.5-bin.zip#' \
+              android/gradle/wrapper/gradle-wrapper.properties
+          fi
 
-      - name: Format
-        working-directory: ${{ env.PROJECT_DIR }}
-        run: dart format lib
+          if [ -f android/settings.gradle ]; then
+            sed -i 's/id "com.android.application" version "[^"]*"/id "com.android.application" version "8.11.1"/' android/settings.gradle || true
+            sed -i 's/id "org.jetbrains.kotlin.android" version "[^"]*"/id "org.jetbrains.kotlin.android" version "2.2.20"/' android/settings.gradle || true
+            sed -i 's/id("com.android.application") version "[^"]*"/id("com.android.application") version "8.11.1"/' android/settings.gradle || true
+            sed -i 's/id("org.jetbrains.kotlin.android") version "[^"]*"/id("org.jetbrains.kotlin.android") version "2.2.20"/' android/settings.gradle || true
+          fi
 
-      - name: Analyze
-        working-directory: ${{ env.PROJECT_DIR }}
-        run: flutter analyze --no-fatal-infos --no-fatal-warnings
-
-      - name: Build User APK
-        working-directory: ${{ env.PROJECT_DIR }}
-        run: flutter build apk --release --flavor user -t lib/main_user.dart
-
-      - name: Build Admin APK
-        working-directory: ${{ env.PROJECT_DIR }}
-        run: flutter build apk --release --flavor admin -t lib/main_admin.dart
-
-      - name: Collect APKs
-        working-directory: ${{ env.PROJECT_DIR }}
+      - name: Flutter clean and pub get
         shell: bash
         run: |
           set -euo pipefail
+          cd "$PROJECT_DIR"
+          flutter clean
+          flutter pub get
+
+      - name: Format
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$PROJECT_DIR"
+          dart format lib
+
+      - name: Analyze
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$PROJECT_DIR"
+          flutter analyze --no-fatal-infos --no-fatal-warnings
+
+      - name: Build User APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$PROJECT_DIR"
+          flutter build apk --release --flavor user -t lib/main_user.dart
+
+      - name: Build Admin APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$PROJECT_DIR"
+          flutter build apk --release --flavor admin -t lib/main_admin.dart
+
+      - name: Collect APKs
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$PROJECT_DIR"
           mkdir -p release
-          cp build/app/outputs/flutter-apk/app-user-release.apk release/SADEE-DIMA-OPTIMIZER-USER.apk
-          cp build/app/outputs/flutter-apk/app-admin-release.apk release/SADEE-DIMA-OPTIMIZER-ADMIN.apk
+
+          USER_APK="build/app/outputs/flutter-apk/app-user-release.apk"
+          ADMIN_APK="build/app/outputs/flutter-apk/app-admin-release.apk"
+
+          test -f "$USER_APK" || { echo "ERROR: User APK not found"; find build -type f -name '*.apk' -print; exit 1; }
+          test -f "$ADMIN_APK" || { echo "ERROR: Admin APK not found"; find build -type f -name '*.apk' -print; exit 1; }
+
+          cp "$USER_APK" release/SADEE-DIMA-OPTIMIZER-USER.apk
+          cp "$ADMIN_APK" release/SADEE-DIMA-OPTIMIZER-ADMIN.apk
           ls -lh release
 
       - name: Upload APKs
         uses: actions/upload-artifact@v4
         with:
-          name: SADEE-DIMA-OPTIMIZER-V6-FINAL
+          name: SADEE-DIMA-OPTIMIZER-APKs
           path: |
             ${{ env.PROJECT_DIR }}/release/SADEE-DIMA-OPTIMIZER-USER.apk
             ${{ env.PROJECT_DIR }}/release/SADEE-DIMA-OPTIMIZER-ADMIN.apk
