@@ -11,8 +11,47 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout GitHub repository
         uses: actions/checkout@v4
+
+      - name: Find ZIP file
+        run: |
+          echo "ZIP files:"
+          find . -maxdepth 3 -type f \( -name "*.zip" -o -name "*.ZIP" \)
+
+      - name: Extract ZIP
+        run: |
+          mkdir -p extracted
+
+          ZIP_FILE=$(find . -maxdepth 3 -type f \( -name "*.zip" -o -name "*.ZIP" \) | head -n 1)
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo "❌ ZIP file not found"
+            exit 1
+          fi
+
+          echo "📦 Extracting: $ZIP_FILE"
+          unzip -o "$ZIP_FILE" -d extracted
+
+      - name: Find Flutter project
+        run: |
+          echo "🔎 Searching for pubspec.yaml..."
+
+          PUBSPEC=$(find extracted -type f -name "pubspec.yaml" | head -n 1)
+
+          if [ -z "$PUBSPEC" ]; then
+            echo "❌ pubspec.yaml not found inside ZIP"
+            echo "ZIP contents:"
+            find extracted -maxdepth 4 -type f | head -100
+            exit 1
+          fi
+
+          PROJECT_DIR=$(dirname "$PUBSPEC")
+
+          echo "✅ Flutter project found:"
+          echo "$PROJECT_DIR"
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
@@ -24,17 +63,20 @@ jobs:
       - name: Flutter version
         run: flutter --version
 
-      - name: Get dependencies
+      - name: Flutter pub get
+        working-directory: ${{ env.PROJECT_DIR }}
         run: flutter pub get
 
-      - name: Analyze
+      - name: Flutter analyze
+        working-directory: ${{ env.PROJECT_DIR }}
         run: flutter analyze
 
       - name: Build APK
+        working-directory: ${{ env.PROJECT_DIR }}
         run: flutter build apk --release
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: sadee-x-dima-optimizer-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
+          name: SADEE-X-DIMA-OPTIMIZER-APK
+          path: ${{ env.PROJECT_DIR }}/build/app/outputs/flutter-apk/app-release.apk
