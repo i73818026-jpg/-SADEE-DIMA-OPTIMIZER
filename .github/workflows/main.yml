@@ -11,19 +11,14 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # --------------------------------------------------
+
       # 1. Checkout
-      # --------------------------------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # --------------------------------------------------
       # 2. Find ZIP
-      # --------------------------------------------------
       - name: Find ZIP file
         run: |
-          echo "Searching for ZIP..."
-
           ZIP_FILE=$(find . -maxdepth 3 -type f \
             \( -name "*.zip" -o -name "*.ZIP" \) \
             | head -n 1)
@@ -33,28 +28,17 @@ jobs:
             exit 1
           fi
 
-          echo "✅ ZIP found:"
-          echo "$ZIP_FILE"
-
           echo "ZIP_FILE=$ZIP_FILE" >> "$GITHUB_ENV"
+          echo "✅ Found: $ZIP_FILE"
 
-      # --------------------------------------------------
       # 3. Extract ZIP
-      # --------------------------------------------------
-      - name: Extract Flutter project
+      - name: Extract ZIP
         run: |
           rm -rf extracted
           mkdir -p extracted
-
-          echo "📦 Extracting ZIP..."
-
           unzip -o "$ZIP_FILE" -d extracted
 
-          echo "✅ ZIP extracted"
-
-      # --------------------------------------------------
-      # 4. Find pubspec.yaml
-      # --------------------------------------------------
+      # 4. Find Flutter project
       - name: Find Flutter project
         run: |
           PUBSPEC=$(find extracted \
@@ -64,31 +48,24 @@ jobs:
 
           if [ -z "$PUBSPEC" ]; then
             echo "❌ pubspec.yaml not found"
-            echo ""
-            echo "Extracted files:"
-            find extracted -maxdepth 4 -type f | head -200
             exit 1
           fi
 
           PROJECT_DIR=$(dirname "$PUBSPEC")
 
-          echo "✅ Flutter project found:"
-          echo "$PROJECT_DIR"
-
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-      # --------------------------------------------------
-      # 5. Setup Java 17
-      # --------------------------------------------------
+          echo "✅ Flutter project:"
+          echo "$PROJECT_DIR"
+
+      # 5. Java 17
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
-      # --------------------------------------------------
-      # 6. Setup Flutter
-      # --------------------------------------------------
+      # 6. Flutter
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
@@ -96,101 +73,45 @@ jobs:
           channel: stable
           cache: true
 
-      # --------------------------------------------------
-      # 7. Check versions
-      # --------------------------------------------------
-      - name: Check Flutter and Java
-        run: |
-          echo "===== FLUTTER ====="
-          flutter --version
-
-          echo ""
-          echo "===== JAVA ====="
-          java -version
-
-          echo ""
-          echo "===== JAVA HOME ====="
-          echo "$JAVA_HOME"
-
-      # --------------------------------------------------
-      # 8. Upgrade Android Gradle Plugin
-      # --------------------------------------------------
-      - name: Upgrade Android Gradle Plugin
+      # 7. Upgrade AGP
+      - name: Update Android Gradle Plugin
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
-          echo "Updating Android Gradle Plugin..."
-
           if [ -f android/settings.gradle ]; then
-
-            sed -i \
-              's/com.android.application" version "[^"]*"/com.android.application" version "8.9.1"/g' \
-              android/settings.gradle
-
-            sed -i \
-              's/com.android.library" version "[^"]*"/com.android.library" version "8.9.1"/g' \
-              android/settings.gradle
-
+            sed -i 's/com.android.application" version "[^"]*"/com.android.application" version "8.9.1"/g' android/settings.gradle
+            sed -i 's/com.android.library" version "[^"]*"/com.android.library" version "8.9.1"/g' android/settings.gradle
           fi
 
           if [ -f android/settings.gradle.kts ]; then
-
-            sed -i \
-              's/id("com.android.application") version "[^"]*"/id("com.android.application") version "8.9.1"/g' \
-              android/settings.gradle.kts
-
-            sed -i \
-              's/id("com.android.library") version "[^"]*"/id("com.android.library") version "8.9.1"/g' \
-              android/settings.gradle.kts
-
+            sed -i 's/id("com.android.application") version "[^"]*"/id("com.android.application") version "8.9.1"/g' android/settings.gradle.kts
+            sed -i 's/id("com.android.library") version "[^"]*"/id("com.android.library") version "8.9.1"/g' android/settings.gradle.kts
           fi
 
-      # --------------------------------------------------
-      # 9. Update Gradle wrapper
-      # --------------------------------------------------
-      - name: Update Gradle wrapper
+      # 8. Gradle
+      - name: Update Gradle
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
-          echo "Updating Gradle wrapper..."
-
           if [ -f android/gradle/wrapper/gradle-wrapper.properties ]; then
-
-            sed -i \
-              's#gradle-[0-9.]*-all.zip#gradle-8.11.1-all.zip#g' \
-              android/gradle/wrapper/gradle-wrapper.properties
-
-            sed -i \
-              's#gradle-[0-9.]*-bin.zip#gradle-8.11.1-bin.zip#g' \
-              android/gradle/wrapper/gradle-wrapper.properties
-
+            sed -i 's#gradle-[0-9.]*-all.zip#gradle-8.11.1-all.zip#g' android/gradle/wrapper/gradle-wrapper.properties
+            sed -i 's#gradle-[0-9.]*-bin.zip#gradle-8.11.1-bin.zip#g' android/gradle/wrapper/gradle-wrapper.properties
           fi
 
-      # --------------------------------------------------
-      # 10. Fix Java/Kotlin JVM target
-      # --------------------------------------------------
-      - name: Fix Java and Kotlin JVM target
+      # 9. Fix JVM
+      - name: Fix JVM target
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
           python3 <<'PY'
           from pathlib import Path
 
-          gradle_file = Path("android/app/build.gradle")
+          path = Path("android/app/build.gradle")
 
-          if gradle_file.exists():
-
-              text = gradle_file.read_text()
-
-              # ------------------------------------------
-              # Java 17
-              # ------------------------------------------
+          if path.exists():
+              text = path.read_text()
 
               text = text.replace(
                   "JavaVersion.VERSION_1_8",
                   "JavaVersion.VERSION_17"
               )
-
-              # ------------------------------------------
-              # Kotlin 17
-              # ------------------------------------------
 
               text = text.replace(
                   "jvmTarget = '1.8'",
@@ -202,120 +123,155 @@ jobs:
                   'jvmTarget = "17"'
               )
 
-              # ------------------------------------------
-              # Add Java compile options if missing
-              # ------------------------------------------
+              path.write_text(text)
 
-              if "compileOptions" not in text:
+              print("✅ JVM target updated")
+          PY
 
-                  text += """
-
-          android {
-              compileOptions {
-                  sourceCompatibility JavaVersion.VERSION_17
-                  targetCompatibility JavaVersion.VERSION_17
-              }
-          }
-          """
-
-              # ------------------------------------------
-              # Add Kotlin JVM target
-              # ------------------------------------------
-
-              if "KotlinCompile" not in text:
-
-                  text += """
-
-          tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
-              kotlinOptions {
-                  jvmTarget = "17"
-              }
-          }
-          """
-
-              gradle_file.write_text(text)
-
-              print("✅ android/app/build.gradle updated")
-
-          else:
-              print("⚠️ android/app/build.gradle not found")
-
-      # --------------------------------------------------
-      # 11. Show Android configuration
-      # --------------------------------------------------
-      - name: Show Android files
-        working-directory: ${{ env.PROJECT_DIR }}
-        run: |
-          echo "===== Android directory ====="
-          ls -la android
-
-          echo ""
-          echo "===== App directory ====="
-          ls -la android/app
-
-          echo ""
-          echo "===== Gradle properties ====="
-
-          if [ -f android/gradle.properties ]; then
-            cat android/gradle.properties
-          fi
-
-      # --------------------------------------------------
-      # 12. Flutter pub get
-      # --------------------------------------------------
+      # 10. Dependencies
       - name: Flutter pub get
         working-directory: ${{ env.PROJECT_DIR }}
-        run: |
-          flutter pub get
+        run: flutter pub get
 
-      # --------------------------------------------------
-      # 13. Analyze
-      # --------------------------------------------------
+      # 11. Analyze
       - name: Flutter analyze
         working-directory: ${{ env.PROJECT_DIR }}
-        run: |
-          flutter analyze || true
+        run: flutter analyze || true
 
-      # --------------------------------------------------
-      # 14. Clean
-      # --------------------------------------------------
+      # 12. Clean
       - name: Flutter clean
         working-directory: ${{ env.PROJECT_DIR }}
-        run: |
-          flutter clean
+        run: flutter clean
 
-      # --------------------------------------------------
-      # 15. Get packages again
-      # --------------------------------------------------
       - name: Flutter pub get again
         working-directory: ${{ env.PROJECT_DIR }}
-        run: |
-          flutter pub get
+        run: flutter pub get
 
-      # --------------------------------------------------
-      # 16. Build Release APK
-      # --------------------------------------------------
-      - name: Build Release APK
+      # 13. Generate temporary signing key
+      - name: Generate release keystore
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          keytool -genkeypair \
+            -v \
+            -keystore release-keystore.jks \
+            -alias sadee \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -storepass sadee123 \
+            -keypass sadee123 \
+            -dname "CN=SADEE X DIMA, OU=Optimizer, O=SADEE, L=Colombo, ST=Western, C=LK"
+
+      # 14. Create key.properties
+      - name: Create signing configuration
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          cat > android/key.properties <<EOF
+          storePassword=sadee123
+          keyPassword=sadee123
+          keyAlias=sadee
+          storeFile=../release-keystore.jks
+          EOF
+
+      # 15. Configure release signing
+      - name: Configure Android signing
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          path = Path("android/app/build.gradle")
+
+          if not path.exists():
+              raise SystemExit("android/app/build.gradle not found")
+
+          text = path.read_text()
+
+          if "key.properties" not in text:
+              text = """
+          import java.util.Properties
+          import java.io.FileInputStream
+
+          def keystoreProperties = new Properties()
+          def keystorePropertiesFile = rootProject.file('key.properties')
+
+          if (keystorePropertiesFile.exists()) {
+              keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+          }
+
+          """ + text
+
+          if "signingConfigs {" not in text:
+              text = text.replace(
+                  "android {",
+                  """android {
+              signingConfigs {
+                  release {
+                      keyAlias keystoreProperties['keyAlias']
+                      keyPassword keystoreProperties['keyPassword']
+                      storeFile keystoreProperties['storeFile'] ? file(keystoreProperties['storeFile']) : null
+                      storePassword keystoreProperties['storePassword']
+                  }
+              }
+          """,
+                  1
+              )
+
+          if "signingConfig signingConfigs.release" not in text:
+              text = text.replace(
+                  "buildTypes {",
+                  """buildTypes {
+                  release {
+                      signingConfig signingConfigs.release
+                  }
+              """,
+                  1
+              )
+
+          path.write_text(text)
+
+          print("✅ Release signing configured")
+          PY
+
+      # 16. Build
+      - name: Build signed APK
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
           flutter build apk --release
 
-      # --------------------------------------------------
-      # 17. Check APK
-      # --------------------------------------------------
-      - name: Check APK
+      # 17. Verify APK
+      - name: Verify APK
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
-          echo "===== APK FILES ====="
+          APK="build/app/outputs/flutter-apk/app-release.apk"
 
-          find build/app/outputs/flutter-apk \
+          if [ ! -f "$APK" ]; then
+            echo "❌ APK not found"
+            exit 1
+          fi
+
+          echo "===== APK INFO ====="
+          ls -lh "$APK"
+
+          echo ""
+          echo "===== APK SIGNATURE ====="
+
+          APKSIGNER=$(find "$ANDROID_HOME" \
             -type f \
-            -name "*.apk" \
-            -exec ls -lh {} \;
+            -name "apksigner" \
+            | head -n 1)
 
-      # --------------------------------------------------
+          if [ -z "$APKSIGNER" ]; then
+            echo "❌ apksigner not found"
+            exit 1
+          fi
+
+          "$APKSIGNER" verify --verbose "$APK"
+
+          echo ""
+          echo "✅ APK SIGNATURE VERIFIED"
+
       # 18. Upload APK
-      # --------------------------------------------------
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
