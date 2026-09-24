@@ -1,9 +1,10 @@
-name: Build SADEE X DIMA Apps
+name: Build Sadee X Dima Apps
 
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches:
+      - main
 
 permissions:
   contents: read
@@ -13,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
       - name: Setup Flutter
@@ -22,89 +23,95 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Prepare Flutter project
+      - name: Extract Flutter ZIP
         shell: bash
         run: |
           set -euo pipefail
 
-          ROOT="$GITHUB_WORKSPACE"
-          WORK="$ROOT/.build_project"
-          rm -rf "$WORK"
-          mkdir -p "$WORK"
-
-          # 1) If the repository itself is a Flutter project, use it.
-          if [ -f "$ROOT/pubspec.yaml" ]; then
-            PROJECT_DIR="$ROOT"
-          else
-            # 2) Otherwise extract the project ZIP.
-            ZIP_FILE=""
-            for candidate in \
-              "$ROOT/SADEE_X_DIMA_OPTIMIZER_REAL_CYBER_V7.zip" \
-              "$ROOT/SADEE_X_DIMA_OPTIMIZER_V7.zip" \
-              "$ROOT"/*.zip; do
-              if [ -f "$candidate" ]; then
-                ZIP_FILE="$candidate"
-                break
-              fi
-            done
-
-            if [ -z "$ZIP_FILE" ]; then
-              echo "ERROR: Flutter project not found and no ZIP file exists."
-              echo "Repository files:"
-              find "$ROOT" -maxdepth 3 -type f -print | sort | head -200
-              exit 1
-            fi
-
-            echo "Using ZIP: $ZIP_FILE"
-            unzip -q -o "$ZIP_FILE" -d "$WORK"
-
-            # Find pubspec at any depth. This handles ZIPs containing
-            # either the Flutter project root or one extra wrapper folder.
-            FOUND="$(find "$WORK" -type f -name pubspec.yaml -not -path '*/.git/*' -print | head -n 1 || true)"
-
-            if [ -z "$FOUND" ]; then
-              echo "ERROR: pubspec.yaml not found after extracting ZIP."
-              echo "ZIP contents:"
-              unzip -l "$ZIP_FILE" | head -200
-              exit 1
-            fi
-
-            PROJECT_DIR="$(dirname "$FOUND")"
+          ZIP_FILE="$(find "$GITHUB_WORKSPACE" -maxdepth 4 -type f -iname 'SADEE_X_DIMA_OPTIMIZER_REAL_CYBER_V7.zip' -print -quit || true)"
+          if [ -z "$ZIP_FILE" ]; then
+            ZIP_FILE="$(find "$GITHUB_WORKSPACE" -maxdepth 4 -type f -iname '*.zip' -not -path '*/.git/*' -print -quit || true)"
           fi
 
-          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "Flutter project: $PROJECT_DIR"
-          test -f "$PROJECT_DIR/pubspec.yaml"
+          if [ -z "$ZIP_FILE" ]; then
+            echo "ERROR: No ZIP file found."
+            exit 1
+          fi
 
-      - name: Verify Flutter project
+          rm -rf "$GITHUB_WORKSPACE/extracted_project"
+          mkdir -p "$GITHUB_WORKSPACE/extracted_project"
+          unzip -o "$ZIP_FILE" -d "$GITHUB_WORKSPACE/extracted_project"
+
+          PUBSPEC="$(find "$GITHUB_WORKSPACE/extracted_project" -type f -name 'pubspec.yaml' -print | head -n 1 || true)"
+
+          if [ -z "$PUBSPEC" ]; then
+            echo "ERROR: pubspec.yaml not found inside ZIP."
+            exit 1
+          fi
+
+          PROJECT_DIR="$(dirname "$PUBSPEC")"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "PROJECT_DIR=$PROJECT_DIR"
+
+      - name: Verify Project
         shell: bash
         run: |
           set -euo pipefail
           cd "$PROJECT_DIR"
-          for f in \
-            pubspec.yaml \
-            lib/main_user.dart \
-            lib/main_admin.dart \
-            lib/config.dart \
-            lib/services/key_service.dart \
-            lib/services/optimizer_service.dart \
-            lib/screens/license_gate.dart \
-            lib/screens/user_home.dart \
-            lib/screens/admin_home.dart \
-            android/app/build.gradle; do
-            test -f "$f" || { echo "MISSING: $f"; exit 1; }
-          done
-          echo "Flutter project verified successfully."
+          test -f pubspec.yaml
+          test -f lib/main_user.dart
+          test -f lib/main_admin.dart
+          test -f android/app/build.gradle
+          echo "Project verified."
 
-      - name: Stabilize Android toolchain
+      - name: Repair Logo PNG
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$PROJECT_DIR"
+
+          LOGO="android/app/src/main/res/drawable-nodpi/sadee_logo.png"
+
+          if [ ! -f "$LOGO" ]; then
+            echo "ERROR: Logo not found: $LOGO"
+            exit 1
+          fi
+
+          python3 -m pip install --quiet --disable-pip-version-check --user pillow
+
+          python3 -c "from PIL import Image; import sys, os; p=sys.argv[1]; t=p+'.fixed.png'; i=Image.open(p); i.load(); i.convert('RGBA').save(t,'PNG',optimize=False,compress_level=6); os.replace(t,p); c=Image.open(p); c.load(); assert c.format=='PNG'; print('PNG OK:',c.format,c.size)" "$LOGO"
+
+          file "$LOGO"
+          python3 -c "import sys; p=sys.argv[1]; b=open(p,'rb').read(8); assert b==b'\x89PNG\r\n\x1a\n', f'Invalid PNG signature: {b!r}'; print('PNG signature verified')" "$LOGO"
+
+      - name: Fix MainActivity Kotlin
+        shell: bash
+        env:
+          CPU_FUNCTION_B64: ICAgIHByaXZhdGUgZnVuIHJlYWRDcHVVc2FnZSgpOiBEb3VibGUgewogICAgICAgIHJldHVybiB0cnkgewogICAgICAgICAgICBmdW4gcmVhZENwdSgpOiBMb25nQXJyYXkgewogICAgICAgICAgICAgICAgdmFsIGxpbmUgPSBGaWxlKCIvcHJvYy9zdGF0IikudXNlTGluZXMgeyBsaW5lcyAtPgogICAgICAgICAgICAgICAgICAgIGxpbmVzLmZpcnN0T3JOdWxsIHsgaXQuc3RhcnRzV2l0aCgiY3B1ICIpIH0KICAgICAgICAgICAgICAgIH0KICAgICAgICAgICAgICAgIGlmIChsaW5lID09IG51bGwpIHJldHVybiBsb25nQXJyYXlPZigwTCwgMEwpCiAgICAgICAgICAgICAgICB2YWwgcGFydHMgPSBsaW5lLnRyaW0oKS5zcGxpdChSZWdleCgiXFxzKyIpKQogICAgICAgICAgICAgICAgdmFsIHVzZXIgPSBwYXJ0cy5nZXRPck51bGwoMSk/LnRvTG9uZ09yTnVsbCgpID86IDBMCiAgICAgICAgICAgICAgICB2YWwgbmljZSA9IHBhcnRzLmdldE9yTnVsbCgyKT8udG9Mb25nT3JOdWxsKCkgPzogMEwKICAgICAgICAgICAgICAgIHZhbCBzeXN0ZW0gPSBwYXJ0cy5nZXRPck51bGwoMyk/LnRvTG9uZ09yTnVsbCgpID86IDBMCiAgICAgICAgICAgICAgICB2YWwgaWRsZSA9IHBhcnRzLmdldE9yTnVsbCg0KT8udG9Mb25nT3JOdWxsKCkgPzogMEwKICAgICAgICAgICAgICAgIHZhbCBpbyA9IHBhcnRzLmdldE9yTnVsbCg1KT8udG9Mb25nT3JOdWxsKCkgPzogMEwKICAgICAgICAgICAgICAgIHZhbCBpcnEgPSBwYXJ0cy5nZXRPck51bGwoNik/LnRvTG9uZ09yTnVsbCgpID86IDBMCiAgICAgICAgICAgICAgICB2YWwgc29mdElycSA9IHBhcnRzLmdldE9yTnVsbCg3KT8udG9Mb25nT3JOdWxsKCkgPzogMEwKICAgICAgICAgICAgICAgIHZhbCBzdGVhbCA9IHBhcnRzLmdldE9yTnVsbCg4KT8udG9Mb25nT3JOdWxsKCkgPzogMEwKICAgICAgICAgICAgICAgIHZhbCB0b3RhbCA9IHVzZXIgKyBuaWNlICsgc3lzdGVtICsgaWRsZSArIGlvICsgaXJxICsgc29mdElycSArIHN0ZWFsCiAgICAgICAgICAgICAgICB2YWwgYWN0aXZlID0gdG90YWwgLSBpZGxlIC0gaW8KICAgICAgICAgICAgICAgIHJldHVybiBsb25nQXJyYXlPZih0b3RhbCwgYWN0aXZlKQogICAgICAgICAgICB9CiAgICAgICAgICAgIHZhbCBmaXJzdCA9IHJlYWRDcHUoKQogICAgICAgICAgICBUaHJlYWQuc2xlZXAoMTIwKQogICAgICAgICAgICB2YWwgc2Vjb25kID0gcmVhZENwdSgpCiAgICAgICAgICAgIHZhbCB0b3RhbERlbHRhID0gc2Vjb25kWzBdIC0gZmlyc3RbMF0KICAgICAgICAgICAgdmFsIGFjdGl2ZURlbHRhID0gc2Vjb25kWzFdIC0gZmlyc3RbMV0KICAgICAgICAgICAgaWYgKHRvdGFsRGVsdGEgPD0gMEwpIDAuMAogICAgICAgICAgICBlbHNlIChhY3RpdmVEZWx0YS50b0RvdWJsZSgpIC8gdG90YWxEZWx0YSAqIDEwMC4wKS5jb2VyY2VJbigwLjAsIDEwMC4wKQogICAgICAgIH0gY2F0Y2ggKF86IEV4Y2VwdGlvbikgewogICAgICAgICAgICAwLjAKICAgICAgICB9CiAgICB9Cg==
+        run: |
+          set -euo pipefail
+          cd "$PROJECT_DIR"
+
+          MAIN="android/app/src/main/kotlin/com/sadeedima/sadee_x_dima/MainActivity.kt"
+
+          if [ ! -f "$MAIN" ]; then
+            echo "ERROR: MainActivity.kt not found."
+            exit 1
+          fi
+
+          python3 -c 'import base64,re,sys,os; p=sys.argv[1]; s=open(p,encoding="utf-8").read(); r=base64.b64decode(os.environ["CPU_FUNCTION_B64"]).decode(); pattern=r"(?ms)^    private fun readCpuUsage\(\): Double \{.*?^    private fun hasAllFilesAccess"; n=re.subn(pattern,r+"    private fun hasAllFilesAccess",s,count=1); print("CPU FUNCTION REPLACED:",n[1]); assert n[1]==1,"readCpuUsage() not found"; open(p,"w",encoding="utf-8").write(n[0])' "$MAIN"
+
+          grep -n -A45 "private fun readCpuUsage" "$MAIN"
+          echo "MainActivity Kotlin patch completed."
+
+      - name: Patch Android Toolchain
         shell: bash
         run: |
           set -euo pipefail
           cd "$PROJECT_DIR"
 
           if [ -f android/gradle/wrapper/gradle-wrapper.properties ]; then
-            sed -i 's#distributionUrl=.*#distributionUrl=https\\://services.gradle.org/distributions/gradle-8.14.5-bin.zip#' \
-              android/gradle/wrapper/gradle-wrapper.properties
+            sed -i 's#distributionUrl=.*#distributionUrl=https://services.gradle.org/distributions/gradle-8.14.5-bin.zip#' android/gradle/wrapper/gradle-wrapper.properties
           fi
 
           if [ -f android/settings.gradle ]; then
@@ -114,22 +121,51 @@ jobs:
             sed -i 's/id("org.jetbrains.kotlin.android") version "[^"]*"/id("org.jetbrains.kotlin.android") version "2.2.20"/' android/settings.gradle || true
           fi
 
-      - name: Flutter clean and pub get
+          if [ -f android/settings.gradle.kts ]; then
+            sed -i 's/id("com.android.application") version "[^"]*"/id("com.android.application") version "8.11.1"/' android/settings.gradle.kts || true
+            sed -i 's/id("org.jetbrains.kotlin.android") version "[^"]*"/id("org.jetbrains.kotlin.android") version "2.2.20"/' android/settings.gradle.kts || true
+          fi
+
+      - name: Verify Product Flavors
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$PROJECT_DIR"
+
+          BUILD_FILE="android/app/build.gradle"
+
+          grep -Fq "productFlavors" "$BUILD_FILE" || {
+            echo "ERROR: productFlavors not found."
+            exit 1
+          }
+
+          grep -Eq '^[[:space:]]*user[[:space:]]*\{' "$BUILD_FILE" || {
+            echo "ERROR: user flavor not found."
+            exit 1
+          }
+
+          grep -Eq '^[[:space:]]*admin[[:space:]]*\{' "$BUILD_FILE" || {
+            echo "ERROR: admin flavor not found."
+            exit 1
+          }
+
+          echo "Product flavors verified."
+
+      - name: Flutter Clean
         shell: bash
         run: |
           set -euo pipefail
           cd "$PROJECT_DIR"
           flutter clean
-          flutter pub get
 
-      - name: Format
+      - name: Flutter Pub Get
         shell: bash
         run: |
           set -euo pipefail
           cd "$PROJECT_DIR"
-          dart format lib
+          flutter pub get
 
-      - name: Analyze
+      - name: Flutter Analyze
         shell: bash
         run: |
           set -euo pipefail
@@ -141,31 +177,44 @@ jobs:
         run: |
           set -euo pipefail
           cd "$PROJECT_DIR"
-          flutter build apk --release --flavor user -t lib/main_user.dart
+
+          flutter build apk             --release             --flavor user             -t lib/main_user.dart
 
       - name: Build Admin APK
         shell: bash
         run: |
           set -euo pipefail
           cd "$PROJECT_DIR"
-          flutter build apk --release --flavor admin -t lib/main_admin.dart
+
+          flutter build apk             --release             --flavor admin             -t lib/main_admin.dart
 
       - name: Collect APKs
         shell: bash
         run: |
           set -euo pipefail
           cd "$PROJECT_DIR"
+
           mkdir -p release
 
           USER_APK="build/app/outputs/flutter-apk/app-user-release.apk"
           ADMIN_APK="build/app/outputs/flutter-apk/app-admin-release.apk"
 
-          test -f "$USER_APK" || { echo "ERROR: User APK not found"; find build -type f -name '*.apk' -print; exit 1; }
-          test -f "$ADMIN_APK" || { echo "ERROR: Admin APK not found"; find build -type f -name '*.apk' -print; exit 1; }
+          test -f "$USER_APK" || {
+            echo "ERROR: User APK not found."
+            find build -type f -name '*.apk' -print || true
+            exit 1
+          }
+
+          test -f "$ADMIN_APK" || {
+            echo "ERROR: Admin APK not found."
+            find build -type f -name '*.apk' -print || true
+            exit 1
+          }
 
           cp "$USER_APK" release/SADEE-DIMA-OPTIMIZER-USER.apk
           cp "$ADMIN_APK" release/SADEE-DIMA-OPTIMIZER-ADMIN.apk
-          ls -lh release
+
+          ls -lh release/
 
       - name: Upload APKs
         uses: actions/upload-artifact@v4
@@ -175,3 +224,16 @@ jobs:
             ${{ env.PROJECT_DIR }}/release/SADEE-DIMA-OPTIMIZER-USER.apk
             ${{ env.PROJECT_DIR }}/release/SADEE-DIMA-OPTIMIZER-ADMIN.apk
           if-no-files-found: error
+
+      - name: Build Summary
+        run: |
+          echo "======================================"
+          echo "SADEE X DIMA BUILD COMPLETE"
+          echo "======================================"
+          echo "ZIP extraction : SUCCESS"
+          echo "PNG repair     : SUCCESS"
+          echo "Kotlin patch   : SUCCESS"
+          echo "User APK       : SUCCESS"
+          echo "Admin APK      : SUCCESS"
+          echo "ZIP source      : EXTRACTED FROM GITHUB REPO"
+          echo "======================================"
