@@ -1,4 +1,4 @@
-name: SADEE X DIMA - Build User + Admin
+name: SADEE X DIMA - ZIP Build
 
 on:
   workflow_dispatch:
@@ -39,14 +39,14 @@ jobs:
 
           unzip -o "$ZIP_FILE" -d source
 
-          echo "Checking source files..."
+          echo "Checking files..."
 
           test -f source/user/pubspec.yaml
           test -f source/user/lib/main_user.dart
           test -f source/admin/pubspec.yaml
           test -f source/admin/lib/main_admin.dart
 
-          echo "Source files OK."
+          echo "All source files found."
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -80,8 +80,6 @@ jobs:
           cp source/user/lib/main_user.dart user_build/lib/main_user.dart
           cp source/user/pubspec.yaml user_build/pubspec.yaml
 
-          echo "User project prepared."
-
       - name: Create Admin Project
         shell: bash
         run: |
@@ -100,8 +98,6 @@ jobs:
 
           cp source/admin/lib/main_admin.dart admin_build/lib/main_admin.dart
           cp source/admin/pubspec.yaml admin_build/pubspec.yaml
-
-          echo "Admin project prepared."
 
       - name: User Pub Get
         working-directory: user_build
@@ -127,8 +123,8 @@ jobs:
         working-directory: admin_build
         run: flutter analyze --no-fatal-infos --no-fatal-warnings
 
-      - name: Build User APK
-        working-directory: user_build
+      - name: Check Supabase Key
+        shell: bash
         env:
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: |
@@ -139,6 +135,13 @@ jobs:
             exit 1
           fi
 
+          echo "Supabase key configured."
+
+      - name: Build User APK
+        working-directory: user_build
+        env:
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
           flutter build apk \
             --release \
             -t lib/main_user.dart \
@@ -149,34 +152,18 @@ jobs:
         env:
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: |
-          set -e
-
-          if [ -z "$SUPABASE_ANON_KEY" ]; then
-            echo "ERROR: SUPABASE_ANON_KEY secret is missing."
-            exit 1
-          fi
-
           flutter build apk \
             --release \
             -t lib/main_admin.dart \
             --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY"
 
-      - name: Rename User APK
+      - name: Rename APKs
         shell: bash
         run: |
-          set -e
-
-          cp \
-            user_build/build/app/outputs/flutter-apk/app-release.apk \
+          cp user_build/build/app/outputs/flutter-apk/app-release.apk \
             user_build/build/app/outputs/flutter-apk/SADEE-X-DIMA-USER.apk
 
-      - name: Rename Admin APK
-        shell: bash
-        run: |
-          set -e
-
-          cp \
-            admin_build/build/app/outputs/flutter-apk/app-release.apk \
+          cp admin_build/build/app/outputs/flutter-apk/app-release.apk \
             admin_build/build/app/outputs/flutter-apk/SADEE-X-DIMA-ADMIN.apk
 
       - name: Upload User APK
