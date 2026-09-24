@@ -1,7 +1,8 @@
-name: SADEE X DIMA V10 PRO CYBER BUILD
+name: SADEE X DIMA PRO CYBER V10
 
 on:
   workflow_dispatch:
+
   push:
     paths:
       - "**.zip"
@@ -12,8 +13,18 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+
+      # ============================================================
+      # CHECKOUT
+      # ============================================================
+
+      - name: Checkout Repository
         uses: actions/checkout@v4
+
+
+      # ============================================================
+      # FLUTTER
+      # ============================================================
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
@@ -22,133 +33,373 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Extract V10 ZIP
+
+      # ============================================================
+      # FIND V10 ZIP + EXTRACT
+      # ============================================================
+
+      - name: Find and Extract V10 ZIP
         shell: bash
         run: |
           set -euo pipefail
 
+          echo "=========================================="
+          echo " SADEE X DIMA PRO CYBER V10"
+          echo " ZIP EXTRACTION"
+          echo "=========================================="
+
           ZIP=""
+
           if [ -f "SADEE_X_DIMA_OPTIMIZER_PRO_CYBER_V10_FULL.zip" ]; then
             ZIP="SADEE_X_DIMA_OPTIMIZER_PRO_CYBER_V10_FULL.zip"
           else
-            ZIP="$(find . -maxdepth 3 -type f -iname '*.zip' | head -n 1 || true)"
+            ZIP="$(find . -type f -iname '*.zip' -print | head -n 1 || true)"
           fi
 
           if [ -z "$ZIP" ]; then
-            echo "ERROR: No ZIP found in repository."
+            echo "ERROR: V10 ZIP not found."
             exit 1
           fi
+
+          echo "ZIP FOUND:"
+          echo "$ZIP"
 
           rm -rf extracted_project
+
           mkdir -p extracted_project
+
           unzip -q "$ZIP" -d extracted_project
 
-          PUBSPEC="$(find extracted_project -type f -name pubspec.yaml -print -quit)"
+          echo "ZIP extracted."
+
+
+          # --------------------------------------------------------
+          # FIND PUBSPEC
+          # --------------------------------------------------------
+
+          PUBSPEC="$(find extracted_project \
+            -type f \
+            -name pubspec.yaml \
+            -print \
+            -quit)"
+
           if [ -z "$PUBSPEC" ]; then
             echo "ERROR: pubspec.yaml not found inside ZIP."
-            find extracted_project -maxdepth 4 -type f | head -200
+
+            echo ""
+            echo "ZIP CONTENT:"
+            find extracted_project \
+              -maxdepth 5 \
+              -type f \
+              | head -200
+
             exit 1
           fi
 
-          PROJECT_DIR="$(dirname "$PUBSPEC")"
-          PROJECT_DIR="$(cd "$PROJECT_DIR" && pwd)"
-          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "SOURCE PROJECT: $PROJECT_DIR"
 
-      - name: Repair source and logo
+          PROJECT_DIR="$(dirname "$PUBSPEC")"
+
+          PROJECT_DIR="$(cd "$PROJECT_DIR" && pwd)"
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+          echo ""
+          echo "=========================================="
+          echo " FLUTTER PROJECT FOUND"
+          echo "$PROJECT_DIR"
+          echo "=========================================="
+
+
+      # ============================================================
+      # VERIFY PROJECT
+      # ============================================================
+
+      - name: Verify Flutter Project
         shell: bash
         run: |
           set -euo pipefail
+
           cd "$PROJECT_DIR"
 
-          python3 -m pip install --quiet --disable-pip-version-check --user pillow
+          test -f pubspec.yaml
+          test -f lib/main_user.dart
+          test -f lib/main_admin.dart
+
+          echo "Flutter project verification: OK"
+
+
+      # ============================================================
+      # REPAIR LOGO
+      # ============================================================
+
+      - name: Repair Logo PNG
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd "$PROJECT_DIR"
+
+          python3 -m pip install \
+            --quiet \
+            --disable-pip-version-check \
+            --user \
+            pillow
 
           python3 - <<'PY'
           from pathlib import Path
           from PIL import Image
 
-          for p in Path("android/app/src/main/res").rglob("sadee_logo.png"):
-              im = Image.open(p)
-              im.load()
-              tmp = p.with_suffix(".fixed.png")
-              im.convert("RGBA").save(tmp, "PNG")
-              tmp.replace(p)
-              print("PNG OK:", p)
+          root = Path("android/app/src/main/res")
 
-          p = Path("lib/screens/user_home.dart")
-          if p.exists():
-              s = p.read_text()
-              s = s.replace("c=='temp'?.5:1", "c == 'temp' ? .5 : 1")
-              s = s.replace("c == 'temp'?.5:1", "c == 'temp' ? .5 : 1")
-              s = s.replace("c=='temp' ? .5 :1", "c == 'temp' ? .5 : 1")
-              s = s.replace("Border.all((x['c'] as Color).withOpacity(.25))", "Border.all(color: (x['c'] as Color).withOpacity(.25))")
-              s = s.replace("final before=cacheBytes; final cleared=await svc.clearAppCache();", "final cleared=await svc.clearAppCache();")
-              p.write_text(s)
-              print("Dart source repair checked")
+          files = list(root.rglob("sadee_logo.png"))
+
+          if not files:
+              print("No sadee_logo.png found.")
+          else:
+              for p in files:
+
+                  print(f"Checking logo: {p}")
+
+                  image = Image.open(p)
+
+                  image.load()
+
+                  tmp = p.with_name(
+                      p.stem + ".fixed.png"
+                  )
+
+                  image.convert("RGBA").save(
+                      tmp,
+                      "PNG"
+                  )
+
+                  tmp.replace(p)
+
+                  print(f"PNG repaired: {p}")
           PY
 
-      - name: Stabilize Android build tools
+
+      # ============================================================
+      # REPAIR V10 USER HOME SYNTAX
+      # ============================================================
+
+      - name: Repair V10 Dart Syntax
         shell: bash
         run: |
           set -euo pipefail
+
           cd "$PROJECT_DIR"
 
           python3 - <<'PY'
           from pathlib import Path
 
-          p = Path("android/gradle/wrapper/gradle-wrapper.properties")
-          if p.exists():
-              s = p.read_text()
-              import re
-              s = re.sub(r"gradle-[0-9.]+-all\.zip", "gradle-8.14.5-all.zip", s)
-              p.write_text(s)
+          p = Path("lib/screens/user_home.dart")
 
-          for name in ["android/settings.gradle", "android/build.gradle"]:
-              p = Path(name)
-              if p.exists():
-                  s = p.read_text()
-                  s = s.replace("com.android.application version '8.7.3'", "com.android.application version '8.11.1'")
-                  s = s.replace('com.android.application version "8.7.3"', 'com.android.application version "8.11.1"')
-                  s = s.replace("org.jetbrains.kotlin.android version '2.0.21'", "org.jetbrains.kotlin.android version '2.2.20'")
-                  s = s.replace('org.jetbrains.kotlin.android version "2.0.21"', 'org.jetbrains.kotlin.android version "2.2.20"')
-                  s = s.replace("com.android.tools.build:gradle:8.7.3", "com.android.tools.build:gradle:8.11.1")
-                  s = s.replace("ext.kotlin_version = '2.0.21'", "ext.kotlin_version = '2.2.20'")
-                  p.write_text(s)
+          if not p.exists():
+              print("user_home.dart not found.")
+              raise SystemExit(0)
+
+          s = p.read_text()
+
+
+          # --------------------------------------------------------
+          # FIX MALFORMED TERNARY
+          # --------------------------------------------------------
+
+          replacements = {
+
+              "c=='temp'?.5:1":
+                  "c == 'temp' ? .5 : 1",
+
+              "c == 'temp'?.5:1":
+                  "c == 'temp' ? .5 : 1",
+
+              "c=='temp' ? .5 :1":
+                  "c == 'temp' ? .5 : 1",
+
+          }
+
+          for old, new in replacements.items():
+              s = s.replace(old, new)
+
+
+          # --------------------------------------------------------
+          # FIX BORDER.ALL POSITIONAL COLOR
+          # --------------------------------------------------------
+
+          s = s.replace(
+              "Border.all((x['c'] as Color).withOpacity(.25))",
+              "Border.all(color: (x['c'] as Color).withOpacity(.25))"
+          )
+
+
+          # --------------------------------------------------------
+          # FIX V10 CYBER STATUS MISSING ')'
+          #
+          # Broken:
+          #
+          # ...FontWeight.w800))]));
+          #
+          # Correct:
+          #
+          # ...FontWeight.w800))])));
+          #
+          # --------------------------------------------------------
+
+          broken = (
+              "Text('DOWN ${networkDownMbps.toStringAsFixed(2)} "
+              "Mbps  /  UP ${networkUpMbps.toStringAsFixed(2)} "
+              "Mbps',style:const TextStyle("
+              "color:cyan,fontSize:10,fontWeight:FontWeight.w800))]));"
+          )
+
+          fixed = (
+              "Text('DOWN ${networkDownMbps.toStringAsFixed(2)} "
+              "Mbps  /  UP ${networkUpMbps.toStringAsFixed(2)} "
+              "Mbps',style:const TextStyle("
+              "color:cyan,fontSize:10,fontWeight:FontWeight.w800))])));"
+          )
+
+          if broken in s:
+              s = s.replace(broken, fixed)
+              print("V10 cyber status syntax repaired.")
+          else:
+              print("Cyber status syntax already repaired.")
+
+
+          p.write_text(s)
+
+          print("Dart repair completed.")
           PY
 
-      - name: Flutter clean and pub get
+
+      # ============================================================
+      # AUTO FORMAT DART
+      # ============================================================
+
+      - name: Format Dart
         shell: bash
         run: |
           set -euo pipefail
+
           cd "$PROJECT_DIR"
+
+          dart format \
+            lib \
+            >/dev/null
+
+          echo "Dart formatting completed."
+
+
+      # ============================================================
+      # FLUTTER CLEAN
+      # ============================================================
+
+      - name: Flutter Clean
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd "$PROJECT_DIR"
+
           flutter clean
+
+
+      # ============================================================
+      # PUB GET
+      # ============================================================
+
+      - name: Flutter Pub Get
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd "$PROJECT_DIR"
+
           flutter pub get
 
-      - name: Analyze
+
+      # ============================================================
+      # ANALYZE
+      # ============================================================
+
+      - name: Flutter Analyze
         shell: bash
         run: |
           set -euo pipefail
+
           cd "$PROJECT_DIR"
-          flutter analyze --no-fatal-infos --no-fatal-warnings
+
+          flutter analyze \
+            --no-fatal-infos \
+            --no-fatal-warnings
+
+
+      # ============================================================
+      # BUILD USER
+      # ============================================================
 
       - name: Build USER APK
         shell: bash
         run: |
           set -euo pipefail
+
           cd "$PROJECT_DIR"
-          flutter build apk --release --flavor user -t lib/main_user.dart
+
+          flutter build apk \
+            --release \
+            --flavor user \
+            -t lib/main_user.dart
+
+
+      # ============================================================
+      # BUILD ADMIN
+      # ============================================================
 
       - name: Build ADMIN APK
         shell: bash
         run: |
           set -euo pipefail
+
           cd "$PROJECT_DIR"
-          flutter build apk --release --flavor admin -t lib/main_admin.dart
+
+          flutter build apk \
+            --release \
+            --flavor admin \
+            -t lib/main_admin.dart
+
+
+      # ============================================================
+      # SHOW OUTPUT
+      # ============================================================
+
+      - name: Show APK Output
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo ""
+          echo "=========================================="
+          echo " BUILD OUTPUT"
+          echo "=========================================="
+
+          find "$PROJECT_DIR/build/app/outputs/flutter-apk" \
+            -type f \
+            -name "*.apk" \
+            -print
+
+
+      # ============================================================
+      # UPLOAD APK
+      # ============================================================
 
       - name: Upload APKs
         uses: actions/upload-artifact@v4
-        with:
-          name: sadee-x-dima-v10-apks
-          path: ${{ env.PROJECT_DIR }}/build/app/outputs/flutter-apk/*.apk
-          if-no-files-found: error
 
+        with:
+          name: sadee-x-dima-pro-cyber-v10-apks
+
+          path: |
+            ${{ env.PROJECT_DIR }}/build/app/outputs/flutter-apk/*.apk
+
+          if-no-files-found: error
