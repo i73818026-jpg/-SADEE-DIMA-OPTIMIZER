@@ -11,7 +11,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -19,15 +18,15 @@ jobs:
         shell: bash
         run: |
           set -e
-          ZIP=$(find . -type f -iname "*.zip" ! -path "./.git/*" | head -n 1)
+          ZIP_FILE=$(find . -type f -iname "*.zip" ! -path "./.git/*" | head -n 1)
 
-          if [ -z "$ZIP" ]; then
-            echo "ERROR: ZIP file not found"
+          if [ -z "$ZIP_FILE" ]; then
+            echo "ZIP FILE NOT FOUND"
             exit 1
           fi
 
-          echo "ZIP FOUND: $ZIP"
-          echo "ZIP=$ZIP" >> "$GITHUB_ENV"
+          echo "ZIP FOUND: $ZIP_FILE"
+          echo "ZIP_FILE=$ZIP_FILE" >> "$GITHUB_ENV"
 
       - name: Extract ZIP
         shell: bash
@@ -35,9 +34,9 @@ jobs:
           set -e
           rm -rf extracted
           mkdir -p extracted
-          unzip -o "$ZIP" -d extracted
+          unzip -o "$ZIP_FILE" -d extracted
 
-          echo "ZIP extracted"
+          echo "ZIP EXTRACTED"
 
       - name: Find User Project
         shell: bash
@@ -47,7 +46,7 @@ jobs:
           USER_DIR=$(find extracted -type f -path "*/user/pubspec.yaml" -exec dirname {} \; | head -n 1)
 
           if [ -z "$USER_DIR" ]; then
-            echo "ERROR: user project not found"
+            echo "USER PROJECT NOT FOUND"
             find extracted -name "pubspec.yaml"
             exit 1
           fi
@@ -62,7 +61,7 @@ jobs:
           ADMIN_DIR=$(find extracted -type f -path "*/admin/pubspec.yaml" -exec dirname {} \; | head -n 1)
 
           if [ -z "$ADMIN_DIR" ]; then
-            echo "ERROR: admin project not found"
+            echo "ADMIN PROJECT NOT FOUND"
             find extracted -name "pubspec.yaml"
             exit 1
           fi
@@ -82,23 +81,20 @@ jobs:
           channel: stable
           cache: true
 
-      # =========================
-      # USER APP
-      # =========================
-
-      - name: Create User Flutter Project
+      - name: Create User Project
         run: |
           flutter create \
             --org com.sadee.xdima \
             --project-name sadee_optimizer_user \
             user_build
 
-      - name: Copy User Pubspec
+      - name: Copy User Files
         run: |
-          cp "$USER_DIR/pubspec.yaml" user_build/pubspec.yaml
+          rm -rf user_build/lib
+          rm -rf user_build/test
 
-      - name: Copy User Config
-        run: |
+          mkdir -p user_build/lib
+
           if [ -f "$USER_DIR/lib/config.dart" ]; then
             cp "$USER_DIR/lib/config.dart" user_build/lib/config.dart
           else
@@ -113,6 +109,8 @@ const String orderWhatsApp =
     '94768472404';
 EOF
           fi
+
+          cp "$USER_DIR/pubspec.yaml" user_build/pubspec.yaml
 
       - name: Create Clean User Main
         shell: bash
@@ -159,7 +157,7 @@ class _LoginPageState extends State<LoginPage> {
   final keyController = TextEditingController();
   bool loading = false;
 
-  void showMsg(String text) {
+  void msg(String text) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(text)),
     );
@@ -184,7 +182,7 @@ class _LoginPageState extends State<LoginPage> {
     final key = keyController.text.trim().toUpperCase();
 
     if (key.isEmpty) {
-      showMsg('Enter your license key');
+      msg('Enter your license key');
       return;
     }
 
@@ -200,7 +198,7 @@ class _LoginPageState extends State<LoginPage> {
           .maybeSingle();
 
       if (row == null) {
-        showMsg('License key not found');
+        msg('License key not found');
         return;
       }
 
@@ -208,12 +206,12 @@ class _LoginPageState extends State<LoginPage> {
           (row['status'] ?? 'UNUSED').toString().toUpperCase();
 
       if (status == 'PAUSED') {
-        showMsg('License is paused');
+        msg('License is paused');
         return;
       }
 
       if (status == 'EXPIRED') {
-        showMsg('License has expired');
+        msg('License has expired');
         return;
       }
 
@@ -246,7 +244,7 @@ class _LoginPageState extends State<LoginPage> {
         ),
       );
     } catch (e) {
-      showMsg('Connection error');
+      msg('Connection error');
     } finally {
       if (mounted) {
         setState(() {
@@ -256,6 +254,15 @@ class _LoginPageState extends State<LoginPage> {
     }
   }
 
+  Widget price(String title, String amount) {
+    return Card(
+      child: ListTile(
+        title: Text(title),
+        trailing: Text(amount),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -263,16 +270,13 @@ class _LoginPageState extends State<LoginPage> {
         child: ListView(
           padding: const EdgeInsets.all(22),
           children: [
-            const SizedBox(height: 45),
-
+            const SizedBox(height: 40),
             const Icon(
               Icons.bolt,
-              size: 72,
+              size: 70,
               color: Colors.cyan,
             ),
-
-            const SizedBox(height: 12),
-
+            const SizedBox(height: 10),
             const Text(
               'SADEE X DIMA',
               textAlign: TextAlign.center,
@@ -281,7 +285,6 @@ class _LoginPageState extends State<LoginPage> {
                 fontWeight: FontWeight.bold,
               ),
             ),
-
             const Text(
               'OPTIMIZER',
               textAlign: TextAlign.center,
@@ -290,9 +293,7 @@ class _LoginPageState extends State<LoginPage> {
                 letterSpacing: 4,
               ),
             ),
-
             const SizedBox(height: 30),
-
             TextField(
               controller: keyController,
               decoration: const InputDecoration(
@@ -301,9 +302,7 @@ class _LoginPageState extends State<LoginPage> {
                 border: OutlineInputBorder(),
               ),
             ),
-
             const SizedBox(height: 12),
-
             SizedBox(
               height: 52,
               child: FilledButton(
@@ -313,9 +312,7 @@ class _LoginPageState extends State<LoginPage> {
                     : const Text('LOGIN'),
               ),
             ),
-
             const SizedBox(height: 25),
-
             const Text(
               'KEY PRICES',
               style: TextStyle(
@@ -323,22 +320,10 @@ class _LoginPageState extends State<LoginPage> {
                 fontWeight: FontWeight.bold,
               ),
             ),
-
-            const ListTile(
-              title: Text('7 DAYS'),
-              trailing: Text('Rs. 500'),
-            ),
-
-            const ListTile(
-              title: Text('1 MONTH'),
-              trailing: Text('Rs. 1,000'),
-            ),
-
-            const ListTile(
-              title: Text('LIFETIME'),
-              trailing: Text('Rs. 2,200'),
-            ),
-
+            price('7 DAYS', 'Rs. 500'),
+            price('1 MONTH', 'Rs. 1,000'),
+            price('LIFETIME', 'Rs. 2,200'),
+            const SizedBox(height: 10),
             OutlinedButton.icon(
               onPressed: buyKey,
               icon: const Icon(Icons.chat),
@@ -359,8 +344,7 @@ class DashboardPage extends StatefulWidget {
       _DashboardPageState();
 }
 
-class _DashboardPageState
-    extends State<DashboardPage> {
+class _DashboardPageState extends State<DashboardPage> {
   int index = 0;
 
   final pages = const [
@@ -486,9 +470,7 @@ class FeaturePage extends StatelessWidget {
             ),
           ],
         ),
-
         const SizedBox(height: 14),
-
         ...items.map(
           (item) => Card(
             child: ListTile(
@@ -497,9 +479,7 @@ class FeaturePage extends StatelessWidget {
                 color: Colors.cyan,
               ),
               title: Text(item),
-              trailing: const Icon(
-                Icons.chevron_right,
-              ),
+              trailing: const Icon(Icons.chevron_right),
             ),
           ),
         ),
@@ -509,7 +489,7 @@ class FeaturePage extends StatelessWidget {
 }
 DART
 
-      - name: Build User APK
+      - name: Build User
         working-directory: user_build
         run: |
           flutter pub get
@@ -517,18 +497,14 @@ DART
           flutter analyze
           flutter build apk --release
 
-      # =========================
-      # ADMIN APP
-      # =========================
-
-      - name: Create Admin Flutter Project
+      - name: Create Admin Project
         run: |
           flutter create \
             --org com.sadee.xdima \
             --project-name sadee_optimizer_admin \
             admin_build
 
-      - name: Copy Admin
+      - name: Copy Admin Files
         run: |
           rm -rf admin_build/lib
           rm -rf admin_build/test
@@ -536,17 +512,13 @@ DART
           cp -r "$ADMIN_DIR/lib" admin_build/lib
           cp "$ADMIN_DIR/pubspec.yaml" admin_build/pubspec.yaml
 
-      - name: Build Admin APK
+      - name: Build Admin
         working-directory: admin_build
         run: |
           flutter pub get
           dart format lib
           flutter analyze
           flutter build apk --release
-
-      # =========================
-      # APK ARTIFACTS
-      # =========================
 
       - name: Upload User APK
         uses: actions/upload-artifact@v4
