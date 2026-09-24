@@ -1,4 +1,4 @@
-name: Build SADEE X DIMA User + Admin
+name: SADEE X DIMA Build
 
 on:
   workflow_dispatch:
@@ -12,49 +12,24 @@ jobs:
 
     steps:
 
-      # ==============================
-      # CHECKOUT
-      # ==============================
-
-      - name: Checkout Repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-
-      # ==============================
-      # FIND ZIP
-      # ==============================
-
-      - name: Find ZIP File
+      - name: Find ZIP
         shell: bash
         run: |
           set -e
 
-          echo "Searching ZIP..."
-
-          ZIP_FILE=$(find . \
-            -type f \
-            -iname "*.zip" \
-            ! -path "./.git/*" \
-            | head -n 1)
+          ZIP_FILE=$(find . -type f -iname "*.zip" ! -path "./.git/*" | head -n 1)
 
           if [ -z "$ZIP_FILE" ]; then
-            echo "❌ ZIP file not found!"
-            echo ""
-            echo "Repository files:"
-            find . -maxdepth 3 -type f \
-              ! -path "./.git/*" | sort
+            echo "ZIP FILE NOT FOUND"
+            find . -maxdepth 3 -type f ! -path "./.git/*"
             exit 1
           fi
 
-          echo "✅ ZIP FOUND:"
-          echo "$ZIP_FILE"
-
+          echo "ZIP FOUND: $ZIP_FILE"
           echo "ZIP_FILE=$ZIP_FILE" >> "$GITHUB_ENV"
-
-
-      # ==============================
-      # EXTRACT ZIP
-      # ==============================
 
       - name: Extract ZIP
         shell: bash
@@ -62,78 +37,43 @@ jobs:
           set -e
 
           rm -rf extracted
-
           mkdir -p extracted
-
-          echo "Extracting ZIP..."
 
           unzip -o "$ZIP_FILE" -d extracted
 
-          echo ""
-          echo "✅ ZIP extracted"
-          echo ""
-          echo "Extracted files:"
+          echo "ZIP EXTRACTED"
 
-          find extracted -maxdepth 5 -type f | sort
-
-
-      # ==============================
-      # FIND USER + ADMIN
-      # ==============================
-
-      - name: Find User And Admin Projects
+      - name: Find Projects
         shell: bash
         run: |
           set -e
 
-          USER_DIR=$(find extracted \
-            -type f \
-            -path "*/user/pubspec.yaml" \
-            -exec dirname {} \; \
-            | head -n 1)
-
-          ADMIN_DIR=$(find extracted \
-            -type f \
-            -path "*/admin/pubspec.yaml" \
-            -exec dirname {} \; \
-            | head -n 1)
+          USER_DIR=$(find extracted -type f -path "*/user/pubspec.yaml" -exec dirname {} \; | head -n 1)
+          ADMIN_DIR=$(find extracted -type f -path "*/admin/pubspec.yaml" -exec dirname {} \; | head -n 1)
 
           if [ -z "$USER_DIR" ]; then
-            echo "❌ User project not found!"
-            find extracted -type f -name "pubspec.yaml"
+            echo "USER PROJECT NOT FOUND"
+            find extracted -name pubspec.yaml
             exit 1
           fi
 
           if [ -z "$ADMIN_DIR" ]; then
-            echo "❌ Admin project not found!"
-            find extracted -type f -name "pubspec.yaml"
+            echo "ADMIN PROJECT NOT FOUND"
+            find extracted -name pubspec.yaml
             exit 1
           fi
 
           echo "USER_DIR=$USER_DIR" >> "$GITHUB_ENV"
           echo "ADMIN_DIR=$ADMIN_DIR" >> "$GITHUB_ENV"
 
-          echo "✅ USER:"
-          echo "$USER_DIR"
+          echo "USER: $USER_DIR"
+          echo "ADMIN: $ADMIN_DIR"
 
-          echo "✅ ADMIN:"
-          echo "$ADMIN_DIR"
-
-
-      # ==============================
-      # JAVA
-      # ==============================
-
-      - name: Setup Java 17
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
-
-
-      # ==============================
-      # FLUTTER
-      # ==============================
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
@@ -142,12 +82,11 @@ jobs:
           channel: stable
           cache: true
 
+      # =========================
+      # USER APP
+      # =========================
 
-      # ==============================
-      # CREATE USER PROJECT
-      # ==============================
-
-      - name: Create User Flutter Project
+      - name: Create User App
         shell: bash
         run: |
           set -e
@@ -163,171 +102,34 @@ jobs:
           cp -r "$USER_DIR/lib" user_build/lib
           cp "$USER_DIR/pubspec.yaml" user_build/pubspec.yaml
 
-          echo "✅ User project created"
-
-
-      # ==============================
-      # REPAIR USER MAIN.DART
-      # ==============================
-
-      - name: Repair User Source
+      - name: Fix User Main Dart
         shell: bash
         run: |
           set -e
 
-          python3 <<'PY'
-          from pathlib import Path
-
-          p = Path("user_build/lib/main.dart")
-
-          s = p.read_text()
-
-          # Supabase API update
-          s = s.replace(
-              "Supabase.initialize(url: supabaseUrl, anonKey: supabaseAnonKey)",
-              "Supabase.initialize(url: supabaseUrl, publishableKey: supabaseAnonKey)"
-          )
-
-          # Find ToolPage
-          start = s.find("class ToolPage extends StatelessWidget {")
-
-          if start != -1:
-
-              new_tool_page = r'''
-class ToolPage extends StatelessWidget {
-  final String title;
-  final IconData icon;
-  final List<String> items;
-
-  const ToolPage({
-    super.key,
-    required this.title,
-    required this.icon,
-    required this.items,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return SafeArea(
-      child: ListView(
-        padding: const EdgeInsets.all(18),
-        children: [
-          Row(
-            children: [
-              Icon(
-                icon,
-                color: accent,
-                size: 30,
-              ),
-              const SizedBox(width: 10),
-              Text(
-                title,
-                style: const TextStyle(
-                  fontSize: 28,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 8),
-
-          const Text(
-            'SADEE X DIMA OPTIMIZER',
-            style: TextStyle(
-              color: Colors.white54,
-            ),
-          ),
-
-          const SizedBox(height: 18),
-
-          ...items.map(
-            (x) => Card(
-              color: card,
-              child: ListTile(
-                leading: const Icon(
-                  Icons.check_circle_outline,
-                  color: accent,
-                ),
-                title: Text(
-                  x,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                trailing: const Icon(
-                  Icons.chevron_right,
-                ),
-                onTap: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(
-                        '$x is ready for the device-specific implementation.',
-                      ),
-                    ),
-                  );
-                },
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-'''
-
-              s = s[:start] + new_tool_page
-
-          p.write_text(s)
-
-          print("✅ User main.dart repaired")
-          PY
-
-          echo "Checking Dart formatting..."
-
           cd user_build
+
+          python3 -c "from pathlib import Path; p=Path('lib/main.dart'); s=p.read_text(); s=s.replace('Supabase.initialize(url: supabaseUrl, anonKey: supabaseAnonKey)', 'Supabase.initialize(url: supabaseUrl, publishableKey: supabaseAnonKey)'); s=s.replace('_launchButton(),\n        ]);', '_launchButton(),\n        ]));'); start=s.find('class ToolPage extends StatelessWidget {'); s=s[:start] + '''class ToolPage extends StatelessWidget {\n  final String title;\n  final IconData icon;\n  final List<String> items;\n\n  const ToolPage({\n    super.key,\n    required this.title,\n    required this.icon,\n    required this.items,\n  });\n\n  @override\n  Widget build(BuildContext context) {\n    return SafeArea(\n      child: ListView(\n        padding: const EdgeInsets.all(18),\n        children: [\n          Row(\n            children: [\n              Icon(icon, color: accent, size: 30),\n              const SizedBox(width: 10),\n              Text(\n                title,\n                style: const TextStyle(\n                  fontSize: 28,\n                  fontWeight: FontWeight.w900,\n                ),\n              ),\n            ],\n          ),\n          const SizedBox(height: 8),\n          const Text(\n            'SADEE X DIMA OPTIMIZER',\n            style: TextStyle(color: Colors.white54),\n          ),\n          const SizedBox(height: 18),\n          ...items.map(\n            (x) => Card(\n              color: card,\n              child: ListTile(\n                leading: const Icon(\n                  Icons.check_circle_outline,\n                  color: accent,\n                ),\n                title: Text(\n                  x,\n                  style: const TextStyle(\n                    fontWeight: FontWeight.bold,\n                  ),\n                ),\n                trailing: const Icon(Icons.chevron_right),\n                onTap: () {\n                  ScaffoldMessenger.of(context).showSnackBar(\n                    SnackBar(\n                      content: Text(\n                        '$x is ready for the device-specific implementation.',\n                      ),\n                    ),\n                  );\n                },\n              ),\n            ),\n          ),\n        ],\n      ),\n    );\n  }\n}\n'''; p.write_text(s)"
 
           dart format lib
 
-          echo "✅ User source formatted"
-
-
-      # ==============================
-      # USER DEPENDENCIES
-      # ==============================
-
-      - name: User Pub Get
+      - name: User Dependencies
         working-directory: user_build
-        run: |
-          flutter pub get
-
-
-      # ==============================
-      # USER ANALYZE
-      # ==============================
+        run: flutter pub get
 
       - name: Analyze User
         working-directory: user_build
-        run: |
-          flutter analyze
-
-
-      # ==============================
-      # USER APK
-      # ==============================
+        run: flutter analyze
 
       - name: Build User APK
         working-directory: user_build
-        run: |
-          flutter build apk --release
+        run: flutter build apk --release
 
+      # =========================
+      # ADMIN APP
+      # =========================
 
-      # ==============================
-      # CREATE ADMIN PROJECT
-      # ==============================
-
-      - name: Create Admin Flutter Project
+      - name: Create Admin App
         shell: bash
         run: |
           set -e
@@ -343,75 +145,32 @@ class ToolPage extends StatelessWidget {
           cp -r "$ADMIN_DIR/lib" admin_build/lib
           cp "$ADMIN_DIR/pubspec.yaml" admin_build/pubspec.yaml
 
-          echo "✅ Admin project created"
-
-
-      # ==============================
-      # REPAIR ADMIN
-      # ==============================
-
-      - name: Repair Admin Source
+      - name: Fix Admin Main Dart
         shell: bash
         run: |
           set -e
 
-          python3 <<'PY'
-          from pathlib import Path
-
-          p = Path("admin_build/lib/main.dart")
-
-          s = p.read_text()
-
-          s = s.replace(
-              "Supabase.initialize(url: supabaseUrl, anonKey: supabaseAnonKey)",
-              "Supabase.initialize(url: supabaseUrl, publishableKey: supabaseAnonKey)"
-          )
-
-          p.write_text(s)
-
-          print("✅ Admin main.dart repaired")
-          PY
-
           cd admin_build
+
+          python3 -c "from pathlib import Path; p=Path('lib/main.dart'); s=p.read_text(); s=s.replace('Supabase.initialize(url: supabaseUrl, anonKey: supabaseAnonKey)', 'Supabase.initialize(url: supabaseUrl, publishableKey: supabaseAnonKey)'); p.write_text(s)"
 
           dart format lib
 
-          echo "✅ Admin source formatted"
-
-
-      # ==============================
-      # ADMIN DEPENDENCIES
-      # ==============================
-
-      - name: Admin Pub Get
+      - name: Admin Dependencies
         working-directory: admin_build
-        run: |
-          flutter pub get
-
-
-      # ==============================
-      # ADMIN ANALYZE
-      # ==============================
+        run: flutter pub get
 
       - name: Analyze Admin
         working-directory: admin_build
-        run: |
-          flutter analyze
-
-
-      # ==============================
-      # ADMIN APK
-      # ==============================
+        run: flutter analyze
 
       - name: Build Admin APK
         working-directory: admin_build
-        run: |
-          flutter build apk --release
+        run: flutter build apk --release
 
-
-      # ==============================
-      # UPLOAD USER APK
-      # ==============================
+      # =========================
+      # APK ARTIFACTS
+      # =========================
 
       - name: Upload User APK
         uses: actions/upload-artifact@v4
@@ -420,11 +179,6 @@ class ToolPage extends StatelessWidget {
           path: user_build/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
 
-
-      # ==============================
-      # UPLOAD ADMIN APK
-      # ==============================
-
       - name: Upload Admin APK
         uses: actions/upload-artifact@v4
         with:
@@ -432,20 +186,8 @@ class ToolPage extends StatelessWidget {
           path: admin_build/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
 
-
-      # ==============================
-      # COMPLETE
-      # ==============================
-
-      - name: Build Complete
+      - name: Done
         run: |
-          echo ""
-          echo "========================================"
-          echo "     SADEE X DIMA BUILD COMPLETE"
-          echo "========================================"
-          echo ""
-          echo "✅ USER APK"
-          echo "✅ ADMIN APK"
-          echo ""
-          echo "Artifacts are ready."
-          echo "========================================"
+          echo "================================"
+          echo "SADEE X DIMA BUILD SUCCESS"
+          echo "================================"
